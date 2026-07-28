@@ -115,7 +115,7 @@ workspace pulls the core crates from crates.io.
 Clone it alongside this repository:
 
 ```bash
-git clone <metering-service-repo> ai-gateway-metering-service
+git clone https://github.com/noyitz/ai-gateway-metering-service.git
 cd ai-gateway-metering-service
 ```
 
