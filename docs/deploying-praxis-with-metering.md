@@ -451,6 +451,16 @@ effectively always true. Exercising real budget exhaustion means
 seeding a small entitlement first; §7's Check 4 tests the 503 path
 instead, which needs no seeding.
 
+**The balance check is per-user, not per-model, unless you send
+`x-tenant-model`.** The check runs on request headers, before the
+body is readable, so the `?model=` parameter can only be filled from
+the identity header. The model in the *usage event* is resolved later
+from the request body and will be correct either way. Note also that
+`default_model` is applied only when the event is emitted — it does
+not backfill the balance-check URL, which stays empty. If you intend
+to scope entitlements per model, have your authentication layer set
+`x-tenant-model`.
+
 **Cache token fields need this branch.** `cached_input_tokens` and
 `cache_creation_tokens` come from the prompt-cache breakdown in
 `token_count`, which is on this branch and not yet on `main`.
