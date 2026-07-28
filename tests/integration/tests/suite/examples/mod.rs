@@ -12,6 +12,7 @@ mod agentic_routing;
 mod anthropic_messages;
 mod compact;
 mod credential_injection;
+mod external_metering;
 mod full_flow;
 mod guardrails;
 mod mcp_broker;
