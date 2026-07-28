@@ -1,26 +1,54 @@
-# Deploying the External Metering Filter
+# Deploying Praxis AI with the Metering Service
 
-A self-contained walkthrough: build this branch, put a metering
-service behind it, proxy real Anthropic traffic through it, and watch
-the token usage land on the other side.
+A complete walkthrough of a two-component deployment: the Praxis AI
+gateway in front, an external metering service behind it, and real
+Anthropic traffic flowing through both.
 
-Everything below runs on one laptop. No Kubernetes, no cluster, no
-second repository. The only credential you need is an Anthropic API
-key, which is supplied out of band and never written to a file in
-this repository.
+By the end you will have a gateway that authorizes every inference
+request against a token budget, forwards it to Anthropic with a
+server-side API key the client never sees, and records what the call
+cost in a database you can query.
 
-This page is the only thing you need to read. Every file it asks you
-to create is included inline.
+Everything runs on one machine. The only credential you need is an
+Anthropic API key, supplied out of band and never written to a file
+in this repository.
 
 ---
 
-## 1. What the filter does
+## 1. What you are deploying
 
-`external_metering` sits in the request pipeline and does two things.
+Two processes.
 
-**Before the request goes upstream**, it identifies the caller from
-tenant headers and asks a metering service whether that caller still
-has budget:
+**The metering service** owns the accounting. It answers "does this
+caller still have budget?" and it records what each call consumed. It
+keeps its state in PostgreSQL and ships a dashboard.
+
+**Praxis AI** is the gateway. Its `external_metering` filter is the
+link between the two: it asks the metering service for permission on
+the way in, and reports usage on the way out.
+
+```text
+                     ┌──────────────────────────────┐
+                     │      metering service        │──── PostgreSQL
+                     │           :9090              │      :5432
+                     └───▲──────────────────────┬───┘
+       balance check     │                      │  202 Accepted
+       usage CloudEvent  │                      ▼
+                     ┌───┴──────────────────────────┐
+   client ──HTTP──►  │        praxis-ai :8080       │  ──TLS──►  api.anthropic.com:443
+                     │  router                      │
+                     │  external_metering           │
+                     │  token_count                 │
+                     │  credential_injection        │
+                     │  headers                     │
+                     │  load_balancer               │
+                     └──────────────────────────────┘
+```
+
+### How the filter talks to the metering service
+
+**Before the request goes upstream**, the filter identifies the
+caller from tenant headers and asks:
 
 ```text
 GET {metering_url}/api/v1/customers/{username}/entitlements/{feature_key}/value?model={model}
@@ -39,24 +67,6 @@ POST {metering_url}/api/v1/events
 
 The report is fire-and-forget: it never adds latency to the response
 and never fails the request.
-
-```text
-                     ┌──────────────────────────────┐
-                     │      metering service        │
-                     │           :9090              │
-                     └───▲──────────────────────┬───┘
-       balance check     │                      │  202 Accepted
-       usage CloudEvent  │                      ▼
-                     ┌───┴──────────────────────────┐
-   client ──HTTP──►  │        praxis-ai :8080       │  ──TLS──►  api.anthropic.com:443
-                     │  router                      │
-                     │  external_metering           │
-                     │  token_count                 │
-                     │  credential_injection        │
-                     │  headers                     │
-                     │  load_balancer               │
-                     └──────────────────────────────┘
-```
 
 ### Ordering matters
 
@@ -77,7 +87,8 @@ Declare them the other way around and every usage event reports zero.
 | Rust stable 1.96+ | `rustup toolchain install stable` |
 | Rust nightly | formatting only — `rustup toolchain install nightly` |
 | CMake 3.31+ | needed to build the underlying proxy engine |
-| Python 3.9+ | only for the mock metering service in §4 |
+| Docker with Compose | runs the metering service and PostgreSQL |
+| Access to the metering service repository | ask whoever sent you this page |
 | An Anthropic API key | supplied separately, never committed |
 
 On macOS:
@@ -99,7 +110,50 @@ workspace pulls the core crates from crates.io.
 
 ---
 
-## 3. Get the code and build
+## 3. Deploy the metering service
+
+Clone it alongside this repository:
+
+```bash
+git clone <metering-service-repo> ai-gateway-metering-service
+cd ai-gateway-metering-service
+```
+
+Its Compose file publishes port 8080, which collides with the
+gateway. Change that one line in `docker-compose.yaml`:
+
+```yaml
+  metering-service:
+    build: .
+    ports:
+      - "9090:8080"      # was "8080:8080"
+```
+
+Bring both containers up:
+
+```bash
+docker compose up -d --build
+```
+
+The service creates its own schema on first start — there is no
+separate migration step. Confirm it is healthy:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9090/health
+```
+
+Expect `200`. Watch its logs in a spare terminal; you will want them
+during verification:
+
+```bash
+docker compose logs -f metering-service
+```
+
+The dashboard is at <http://127.0.0.1:9090/dashboard>.
+
+---
+
+## 4. Build the gateway
 
 ```bash
 git clone https://github.com/noyitz/ai.git praxis-ai
@@ -123,135 +177,18 @@ Expect 38 passing tests.
 
 ---
 
-## 4. Run a metering service
-
-Pick one. Option A proves the whole loop in thirty seconds. Option B
-gives you a real database and a dashboard.
-
-### Option A — mock service (recommended for a first run)
-
-Save this as `mock-metering.py` in the repository root. It implements
-both endpoints and prints everything it receives.
-
-```python
-#!/usr/bin/env python3
-"""Minimal stand-in for an external metering service."""
-
-import json
-import os
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-PORT = int(os.environ.get("PORT", "9090"))
-DENY = os.environ.get("DENY", "") not in ("", "0", "false")
-
-
-class Handler(BaseHTTPRequestHandler):
-    def _json(self, status, payload):
-        body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        parts = self.path.split("?", 1)
-        segments = parts[0].strip("/").split("/")
-        # api/v1/customers/{username}/entitlements/{feature_key}/value
-        if len(segments) == 7 and segments[2] == "customers" and segments[6] == "value":
-            username, feature_key = segments[3], segments[5]
-            query = parts[1] if len(parts) > 1 else ""
-            print(
-                f"[balance] user={username} feature={feature_key} {query} "
-                f"-> hasAccess={not DENY}",
-                flush=True,
-            )
-            self._json(200, {
-                "hasAccess": not DENY,
-                "balance": 0 if DENY else 1_000_000,
-                "usage": 0,
-                "overage": 0,
-            })
-            return
-        self._json(404, {"error": "not found"})
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length) if length else b"{}"
-        if self.path.rstrip("/") == "/api/v1/events":
-            try:
-                event = json.loads(raw)
-            except json.JSONDecodeError:
-                print(f"[event] unparseable body: {raw!r}", flush=True)
-                self._json(400, {"error": "invalid json"})
-                return
-            print("[event] " + json.dumps(event, indent=2, sort_keys=True), flush=True)
-            self._json(202, {"status": "accepted"})
-            return
-        self._json(404, {"error": "not found"})
-
-    def log_message(self, fmt, *args):
-        """Silence the default access log."""
-
-
-if __name__ == "__main__":
-    mode = "DENY (balance check fails)" if DENY else "ALLOW"
-    print(f"mock metering service on http://127.0.0.1:{PORT} [{mode}]", flush=True)
-    try:
-        HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
-    except KeyboardInterrupt:
-        sys.exit(0)
-```
-
-Run it in its own terminal and leave it there:
-
-```bash
-python3 mock-metering.py
-```
-
-```text
-mock metering service on http://127.0.0.1:9090 [ALLOW]
-```
-
-To exercise the rejection path later, restart it with
-`DENY=1 python3 mock-metering.py`.
-
-### Option B — the real metering service
-
-If you have access to the metering service repository, bring it up
-with Docker Compose. Its Compose file publishes port 8080, which
-collides with the gateway, so remap it to 9090:
-
-```bash
-git clone <metering-service-repo> ai-gateway-metering-service
-cd ai-gateway-metering-service
-docker compose up -d --build postgres
-docker compose run -d --service-ports -p 9090:8080 metering-service
-cd -
-```
-
-Check it:
-
-```bash
-curl -sS http://127.0.0.1:9090/health
-```
-
-The dashboard is at <http://127.0.0.1:9090/dashboard>.
-
----
-
 ## 5. Configure the gateway
 
-Save this as `anthropic-metering.yaml` in the repository root.
+Save this as `anthropic-metering.yaml` in the `praxis-ai` repository
+root.
 
 ```yaml
 # Metered Anthropic Gateway
 #
 # Terminates plain HTTP on :8080, checks the caller's token balance
-# against an external metering service, forwards the request to the
-# Anthropic Messages API over TLS with a server-side API key, then
-# reports the token usage back to the metering service.
+# against the metering service, forwards the request to the Anthropic
+# Messages API over TLS with a server-side API key, then reports the
+# token usage back to the metering service.
 
 listeners:
   - name: gateway
@@ -337,7 +274,7 @@ change are the `endpoints`, the `tls.sni` name, and the `Host` header.
 cargo run --release -p praxis-ai-proxy -- -c anthropic-metering.yaml
 ```
 
-Then, from a third terminal:
+Then, from another terminal:
 
 ```bash
 curl -sS http://127.0.0.1:8080/v1/messages \
@@ -355,58 +292,62 @@ curl -sS http://127.0.0.1:8080/v1/messages \
 
 ## 7. Verify
 
-**Check 1 — the balance check fired.** The metering terminal shows:
+**Check 1 — the completion came back.** The curl output is a normal
+Anthropic Messages response with a `usage` block. Note the numbers.
+
+**Check 2 — the metering service recorded the call.** Its log shows:
 
 ```text
-[balance] user=alice feature=inference-tokens model=claude-sonnet-4-5 -> hasAccess=True
+level=INFO msg="event recorded" user=alice model=claude-sonnet-4-5 tokens=25
 ```
 
-**Check 2 — the completion came back.** The curl output is a normal
-Anthropic Messages response with a `usage` block.
+**Check 3 — the numbers are right.** Query the recorded event back
+out:
 
-**Check 3 — the usage event landed.** The metering terminal shows a
-CloudEvent shortly after:
+```bash
+curl -sS 'http://127.0.0.1:9090/api/v1/dashboard/recent?limit=1'
+```
 
 ```json
-{
-  "specversion": "1.0",
-  "id": "...",
-  "source": "praxis-ai",
-  "type": "inference.tokens.used",
-  "subject": "alice",
-  "time": "2026-01-01T00:00:00+00:00",
-  "datacontenttype": "application/json",
-  "data": {
-    "user": "alice",
-    "group": "engineering",
+[
+  {
+    "timestamp": "2026-01-01T00:00:00Z",
+    "username": "alice",
+    "group_name": "engineering",
     "model": "claude-sonnet-4-5",
     "prompt_tokens": 14,
     "completion_tokens": 11,
     "total_tokens": 25,
     "cached_input_tokens": 0,
     "cache_creation_tokens": 0,
-    "duration_ms": 812
+    "cost_usd": 0.000207
   }
-}
+]
 ```
 
-The numbers must match the `usage` block in the curl output. If they
-are all zero, the filter ordering is wrong — see §1.
+`prompt_tokens` and `completion_tokens` must match the `usage` block
+from Check 1. If they are zero, the filter ordering is wrong — see §1.
 
-**Check 4 — the rejection path works.** Stop the mock service and
-restart it in deny mode:
+The same row appears on the dashboard at
+<http://127.0.0.1:9090/dashboard>.
+
+**Check 4 — the gateway refuses to serve unmetered traffic.** This is
+the one worth proving, because the default is to fail *open*. Set
+`fail_open: false` in `anthropic-metering.yaml`, restart the gateway,
+then stop the metering service:
 
 ```bash
-DENY=1 python3 mock-metering.py
+docker compose -f ../ai-gateway-metering-service/docker-compose.yaml stop metering-service
 ```
 
 Repeat the curl. You should get:
 
 ```text
-token budget exhausted
+metering system unavailable
 ```
 
-with HTTP 429, and no request should reach Anthropic.
+with HTTP 503, and no request should reach Anthropic. Bring the
+service back up and the same curl succeeds again.
 
 ---
 
@@ -452,6 +393,34 @@ forwarding upstream:
 In a real deployment these are injected by an authentication layer in
 front of the gateway, not by the client.
 
+### The usage event
+
+```json
+{
+  "specversion": "1.0",
+  "id": "...",
+  "source": "praxis-ai",
+  "type": "inference.tokens.used",
+  "subject": "alice",
+  "time": "2026-01-01T00:00:00+00:00",
+  "datacontenttype": "application/json",
+  "data": {
+    "user": "alice",
+    "group": "engineering",
+    "subscription": null,
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "prompt_tokens": 14,
+    "completion_tokens": 11,
+    "total_tokens": 25,
+    "cached_input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "duration_ms": 812,
+    "user_agent": "curl/8.4.0"
+  }
+}
+```
+
 ### Responses the filter can produce
 
 | Status | Body | When |
@@ -469,17 +438,18 @@ request instead.
 **No identity header and no `default_username` means silence.** The
 request succeeds, the response is normal, and nothing is metered. This
 is the single most common reason someone reports "the filter does
-nothing." Set `default_username` while you are testing.
+nothing." Set `default_username` while you are bringing things up.
 
 **`fail_open` defaults to `true`.** A gateway pointed at a metering
 service that is down will happily serve traffic unmetered. That is
 usually what you want in production and never what you want while
-verifying the wiring — turn it off when testing.
+verifying the wiring.
 
-**The mock service always says yes.** Its balance check is not backed
-by any accounting. The real service in Option B ships with a large
-fixed quota, so the 429 path will not fire there either without
-seeding an entitlement. Use `DENY=1` to exercise rejection.
+**The 429 path will not fire out of the box.** The metering service
+currently applies a very large fixed quota, so `hasAccess` is
+effectively always true. Exercising real budget exhaustion means
+seeding a small entitlement first; §7's Check 4 tests the 503 path
+instead, which needs no seeding.
 
 **Cache token fields need this branch.** `cached_input_tokens` and
 `cache_creation_tokens` come from the prompt-cache breakdown in
@@ -490,9 +460,9 @@ seeding an entitlement. Use `DENY=1` to exercise rejection.
 buffering the stream. Add `"stream": true` to the request body and
 watch the same event arrive at the end.
 
-**Keep the two local files out of git.** `mock-metering.py` and
-`anthropic-metering.yaml` are scratch files for your machine. Add
-them to `.git/info/exclude` so they are never committed.
+**Keep your local config out of git.** `anthropic-metering.yaml` is a
+scratch file for your machine. Add it to `.git/info/exclude` so it is
+never committed.
 
 ---
 

@@ -18,7 +18,7 @@ API integrations built on
 
 ## Deployment
 
-- [Deploying the external metering filter](deploying-external-metering.md)
+- [Deploying Praxis AI with the metering service](deploying-praxis-with-metering.md)
 
 ## Reference
 
