@@ -4,6 +4,14 @@ A complete walkthrough of a two-component deployment: the Praxis AI
 gateway in front, an external metering service behind it, and real
 Anthropic traffic flowing through both.
 
+The `external_metering` filter speaks a generic HTTP contract
+(balance-check GET, CloudEvents POST) and is not tied to any
+particular metering backend. Any service that implements the two
+endpoints described below will work — the metering service used in
+this guide is one such implementation, provided as a reference for
+demos and proof-of-concept deployments. In production, the filter
+connects to whatever metering or billing system is already in place.
+
 By the end you will have a gateway that authorizes every inference
 request against a token budget, forwards it to Anthropic with a
 server-side API key the client never sees, and records what the call
@@ -21,7 +29,12 @@ Two processes.
 
 **The metering service** owns the accounting. It answers "does this
 caller still have budget?" and it records what each call consumed. It
-keeps its state in PostgreSQL and ships a dashboard.
+keeps its state in PostgreSQL and ships a dashboard. This guide uses
+it as a concrete example, but it is not the only option — the
+`external_metering` filter works with any backend that implements the
+same two HTTP endpoints (balance check and usage event). In a
+production deployment, point `metering_url` at whatever metering or
+billing system serves these endpoints.
 
 **Praxis AI** is the gateway. Its `external_metering` filter is the
 link between the two: it asks the metering service for permission on
@@ -154,6 +167,13 @@ The dashboard is at <http://127.0.0.1:9090/dashboard>.
 ---
 
 ## 4. Build the gateway
+
+This guide uses a fork and feature branch where the metering filter
+and prompt-cache token counting are combined into a single working
+tree. These capabilities are being upstreamed into the main Praxis AI
+repository (`praxis-proxy/ai`) as separate PRs — once merged, you
+will clone from `praxis-proxy/ai` on `main` instead and this section
+will be updated.
 
 ```bash
 git clone https://github.com/noyitz/ai.git praxis-ai
