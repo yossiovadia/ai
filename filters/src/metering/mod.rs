@@ -33,7 +33,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::header::HeaderName;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-use praxis_core::callout::{CalloutClient, CalloutConfig, CalloutRequest, CalloutResult};
+// Local HTTP client for metering callouts, replacing the upstream
+// CalloutClient which is not yet published in praxis-core 0.5.1.
+// This will be replaced with the upstream CalloutClient once a new
+// praxis-core version is released.
 use praxis_filter::{
     BodyAccess, BodyMode, FilterAction, FilterError, HttpFilter, HttpFilterContext, Rejection, parse_filter_config,
 };
@@ -41,6 +44,73 @@ use serde::Deserialize;
 use tracing::{debug, trace, warn};
 
 use self::config::{ExternalMeteringConfig, validate_config};
+
+// -----------------------------------------------------------------------------
+// Local Metering Client (replaces upstream CalloutClient)
+// -----------------------------------------------------------------------------
+
+/// Thin HTTP client for metering callouts.
+struct MeteringClient {
+    client: reqwest::Client,
+}
+
+/// Result of a metering callout.
+enum CalloutResult {
+    Success(CalloutResponse),
+    Failed,
+    Rejected(CalloutResponse),
+}
+
+/// Response from a metering callout.
+struct CalloutResponse {
+    status: u16,
+    body: Bytes,
+}
+
+/// Request for a metering callout.
+struct CalloutRequest {
+    method: http::Method,
+    url: String,
+    headers: Vec<(HeaderName, http::HeaderValue)>,
+    body: Option<Vec<u8>>,
+}
+
+impl MeteringClient {
+    fn new(timeout_ms: u64) -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(timeout_ms))
+            .build()
+            .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        Ok(Self { client })
+    }
+
+    async fn execute(&self, request: CalloutRequest) -> CalloutResult {
+        let mut builder = self.client.request(request.method, &request.url);
+        for (name, value) in request.headers {
+            builder = builder.header(name, value);
+        }
+        if let Some(body) = request.body {
+            builder = builder.body(body);
+        }
+
+        match builder.send().await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                match resp.bytes().await {
+                    Ok(body) => {
+                        if (200..300).contains(&(status as usize)) {
+                            CalloutResult::Success(CalloutResponse { status, body })
+                        } else {
+                            CalloutResult::Rejected(CalloutResponse { status, body })
+                        }
+                    },
+                    Err(_) => CalloutResult::Failed,
+                }
+            },
+            Err(_) => CalloutResult::Failed,
+        }
+    }
+}
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -128,7 +198,7 @@ const STATUS_METERING_UNAVAILABLE: u16 = 503;
 /// ```
 pub struct ExternalMeteringFilter {
     /// Shared HTTP client for balance checks and usage reports.
-    callout_client: Arc<CalloutClient>,
+    callout_client: Arc<MeteringClient>,
 
     /// Model name reported when neither the identity header nor the request
     /// body reveals one.
@@ -169,13 +239,12 @@ impl ExternalMeteringFilter {
         let cfg: ExternalMeteringConfig = parse_filter_config("external_metering", config)?;
         validate_config(&cfg)?;
 
-        let callout_config = CalloutConfig {
-            timeout_ms: cfg.timeout_seconds.saturating_mul(MILLIS_PER_SECOND),
-            ..CalloutConfig::default()
-        };
-        let callout_client = Arc::new(CalloutClient::new(callout_config).map_err(|e| -> FilterError {
-            format!("external_metering: failed to create callout client: {e}").into()
-        })?);
+        let callout_client = Arc::new(
+            MeteringClient::new(u64::from(cfg.timeout_seconds).saturating_mul(MILLIS_PER_SECOND))
+                .map_err(|e| -> FilterError {
+                    format!("external_metering: failed to create callout client: {e}").into()
+                })?,
+        );
 
         Ok(Self {
             callout_client,
@@ -196,7 +265,6 @@ impl ExternalMeteringFilter {
             url: build_balance_url(&self.metering_url, &state.username, &self.feature_key, &state.model),
             headers: Vec::new(),
             body: None,
-            depth: 0,
         };
 
         match self.callout_client.execute(request).await {
@@ -577,6 +645,8 @@ fn reject_budget_exhausted() -> FilterAction {
     FilterAction::Reject(Rejection {
         status: STATUS_BUDGET_EXHAUSTED,
         headers: Vec::new(),
+        header_map: None,
+        preserve_keepalive: false,
         body: Some(Bytes::from_static(b"token budget exhausted")),
     })
 }
@@ -595,6 +665,8 @@ fn reject_unavailable() -> FilterAction {
     FilterAction::Reject(Rejection {
         status: STATUS_METERING_UNAVAILABLE,
         headers: Vec::new(),
+        header_map: None,
+        preserve_keepalive: false,
         body: Some(Bytes::from_static(b"metering system unavailable")),
     })
 }
@@ -607,7 +679,7 @@ fn reject_unavailable() -> FilterAction {
 ///
 /// Metering is an observer: a slow or failing metering service must never add
 /// latency to, or fail, a request the upstream already answered.
-fn spawn_usage_report(client: Arc<CalloutClient>, metering_url: &str, event: &serde_json::Value) {
+fn spawn_usage_report(client: Arc<MeteringClient>, metering_url: &str, event: &serde_json::Value) {
     let url = format!("{}/api/v1/events", metering_url.trim_end_matches('/'));
 
     let body = match serde_json::to_vec(event) {
@@ -627,7 +699,6 @@ fn spawn_usage_report(client: Arc<CalloutClient>, metering_url: &str, event: &se
                 http::HeaderValue::from_static("application/json"),
             )],
             body: Some(body),
-            depth: 0,
         };
 
         report_delivery(client.execute(request).await);
