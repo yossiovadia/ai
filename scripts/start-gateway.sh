@@ -35,7 +35,7 @@ if [[ ! -x "$BINARY" ]]; then
     exit 1
 fi
 
-if ! curl -sf "$KEYCLOAK_URL/health/ready" > /dev/null 2>&1; then
+if ! curl -sf -o /dev/null "$KEYCLOAK_URL/realms/ai-gateway/.well-known/openid-configuration" 2>&1; then
     echo "ERROR: Keycloak not reachable at $KEYCLOAK_URL"
     echo ""
     echo "  docker run -d --name keycloak -p 8280:8080 \\"

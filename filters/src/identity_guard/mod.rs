@@ -113,9 +113,15 @@ impl HttpFilter for IdentityHeaderGuardFilter {
             }
 
             if let Ok(val) = value.to_str() {
-                let meta_key = format!("{}.{}", self.namespace, name_lower);
+                // Namespaced key for structured consumers.
+                let namespaced = format!("{}.{}", self.namespace, name_lower);
                 ctx.filter_metadata
-                    .insert(meta_key, val.to_owned());
+                    .insert(namespaced, val.to_owned());
+                // Unnamespaced key matching the header name, so
+                // external_metering can read it with the same
+                // prefix-based lookup it uses for request headers.
+                ctx.filter_metadata
+                    .insert(name_lower.clone(), val.to_owned());
                 captured += 1;
             }
 

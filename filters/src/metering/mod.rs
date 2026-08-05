@@ -565,11 +565,31 @@ struct Identity {
     username: String,
 }
 
-/// Read identity headers matching `prefix` and mark each one for removal.
+/// Read identity from filter_metadata first (trusted, set by
+/// jwt_auth or similar), then fall back to request headers (set
+/// by an upstream auth layer like Authorino). Metadata takes
+/// precedence so a client cannot spoof identity by sending
+/// forged headers alongside a valid JWT.
 fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Identity {
     let prefix_lower = prefix.to_ascii_lowercase();
     let mut identity = Identity::default();
 
+    // 1. Trusted path: filter_metadata (set by jwt_auth).
+    if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}username")) {
+        identity.username.clone_from(val);
+    }
+    if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}group")) {
+        identity.group.clone_from(val);
+    }
+    if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}subscription")) {
+        identity.subscription.clone_from(val);
+    }
+    if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}model")) {
+        identity.model.clone_from(val);
+    }
+
+    // 2. Fallback: request headers (set by Authorino or similar).
+    //    Only used when metadata is empty (no jwt_auth in pipeline).
     for (key, value) in &ctx.request.headers {
         let key_lower = key.as_str().to_ascii_lowercase();
         let Some(suffix) = key_lower.strip_prefix(prefix_lower.as_str()) else {
@@ -578,10 +598,10 @@ fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Ident
         let val = value.to_str().unwrap_or_default();
 
         match suffix {
-            "group" => val.clone_into(&mut identity.group),
-            "model" => val.clone_into(&mut identity.model),
-            "subscription" => val.clone_into(&mut identity.subscription),
-            "username" => val.clone_into(&mut identity.username),
+            "group" if identity.group.is_empty() => val.clone_into(&mut identity.group),
+            "model" if identity.model.is_empty() => val.clone_into(&mut identity.model),
+            "subscription" if identity.subscription.is_empty() => val.clone_into(&mut identity.subscription),
+            "username" if identity.username.is_empty() => val.clone_into(&mut identity.username),
             _ => {},
         }
 

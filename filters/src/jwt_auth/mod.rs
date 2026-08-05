@@ -25,8 +25,6 @@ mod jwks;
 mod tests;
 
 use async_trait::async_trait;
-use std::borrow::Cow;
-
 use bytes::Bytes;
 use jsonwebtoken::{TokenData, Validation, decode};
 use praxis_filter::{
@@ -204,14 +202,22 @@ impl HttpFilter for JwtAuthFilter {
                 },
             };
 
-        // 6. Extract claims and inject as headers
+        // 6. Extract claims to filter_metadata only.
+        //
+        //    Identity is NOT injected into extra_request_headers
+        //    because those are added to the upstream request after
+        //    request_headers_to_remove is applied — meaning the
+        //    identity_header_guard cannot strip them, and they'd
+        //    leak to the upstream provider.
+        //
+        //    Downstream filters (external_metering) read identity
+        //    from filter_metadata, which is the trusted channel.
         let claims = &token_data.claims;
         for (claim_name, header_name) in &self.claim_headers {
             if let Some(value) = claims.get(claim_name) {
                 let header_value = match value {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Array(arr) => {
-                        // Join array values (e.g. groups: ["ai-eng", "admin"])
                         let parts: Vec<&str> = arr
                             .iter()
                             .filter_map(|v| v.as_str())
@@ -221,8 +227,8 @@ impl HttpFilter for JwtAuthFilter {
                     other => other.to_string(),
                 };
 
-                ctx.extra_request_headers
-                    .push((Cow::Owned(header_name.clone()), header_value));
+                ctx.filter_metadata
+                    .insert(header_name.clone(), header_value);
             }
         }
 

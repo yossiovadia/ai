@@ -68,17 +68,30 @@ impl JwksCache {
         Ok(Self {
             keys: Arc::new(RwLock::new(CachedKeys {
                 by_kid: HashMap::new(),
-                last_refresh: Instant::now() - DEFAULT_TTL,
+                last_refresh: Instant::now().checked_sub(DEFAULT_TTL).unwrap_or_else(Instant::now),
             })),
             client,
             url,
         })
     }
 
-    /// Look up a decoding key by `kid`. If the `kid` is unknown
-    /// and the cooldown has elapsed, refreshes from the JWKS
-    /// endpoint and tries again.
+    /// Look up a decoding key by `kid`. Refreshes when:
+    /// - the `kid` is unknown and the cooldown has elapsed, or
+    /// - the cache TTL has expired (ensures revoked keys stop
+    ///   working within one TTL window).
     pub(super) async fn get_key(&self, kid: &str) -> Option<(DecodingKey, Algorithm)> {
+        // Check if TTL expired — refresh proactively so revoked
+        // keys stop working within one TTL window.
+        {
+            let keys = self.keys.read().await;
+            if keys.last_refresh.elapsed() >= DEFAULT_TTL {
+                drop(keys);
+                if let Err(e) = self.refresh().await {
+                    warn!("JWKS TTL refresh failed: {e}");
+                }
+            }
+        }
+
         // Fast path: key is cached
         {
             let keys = self.keys.read().await;
@@ -139,16 +152,14 @@ impl JwksCache {
             let Some(kid) = jwk.common.key_id.as_ref() else {
                 continue;
             };
-            let Some(alg) = jwk.common.key_algorithm.as_ref() else {
-                continue;
-            };
-
-            let algorithm = match alg {
-                jsonwebtoken::jwk::KeyAlgorithm::RS256 => Algorithm::RS256,
-                jsonwebtoken::jwk::KeyAlgorithm::RS384 => Algorithm::RS384,
-                jsonwebtoken::jwk::KeyAlgorithm::RS512 => Algorithm::RS512,
-                jsonwebtoken::jwk::KeyAlgorithm::ES256 => Algorithm::ES256,
-                jsonwebtoken::jwk::KeyAlgorithm::ES384 => Algorithm::ES384,
+            let algorithm = match jwk.common.key_algorithm.as_ref() {
+                Some(jsonwebtoken::jwk::KeyAlgorithm::RS256) => Algorithm::RS256,
+                Some(jsonwebtoken::jwk::KeyAlgorithm::RS384) => Algorithm::RS384,
+                Some(jsonwebtoken::jwk::KeyAlgorithm::RS512) => Algorithm::RS512,
+                Some(jsonwebtoken::jwk::KeyAlgorithm::ES256) => Algorithm::ES256,
+                Some(jsonwebtoken::jwk::KeyAlgorithm::ES384) => Algorithm::ES384,
+                // Azure AD omits `alg` — infer RS256 from key type.
+                None => Algorithm::RS256,
                 _ => continue,
             };
 

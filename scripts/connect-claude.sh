@@ -46,14 +46,14 @@ fi
 
 # ── Preflight checks ─────────────────────────────────────────────
 
-if ! curl -sf "$GATEWAY_URL" > /dev/null 2>&1; then
+if ! curl -s -o /dev/null -w '%{http_code}' "$GATEWAY_URL/" 2>/dev/null | grep -qE '(200|401|403|404|500)'; then
     echo "ERROR: Praxis gateway not reachable at $GATEWAY_URL"
     echo ""
     echo "  Start it first: ./scripts/start-gateway.sh"
     exit 1
 fi
 
-if ! curl -sf "$KEYCLOAK_URL/health/ready" > /dev/null 2>&1; then
+if ! curl -sf -o /dev/null "$KEYCLOAK_URL/realms/$KC_REALM/.well-known/openid-configuration" 2>&1; then
     echo "ERROR: Keycloak not reachable at $KEYCLOAK_URL"
     exit 1
 fi
@@ -98,7 +98,10 @@ if $DRY_RUN; then
     echo ""
     echo "  export ANTHROPIC_BASE_URL=\"$GATEWAY_URL\""
     echo "  export ANTHROPIC_API_KEY=\"\$JWT\"  # (token omitted for safety)"
-    echo "  export DISABLE_PROMPT_CACHING=1"
+    echo "  export CLAUDE_CODE_USE_VERTEX=\"\""
+    echo "  export CLOUD_ML_REGION=\"\""
+    echo "  export ANTHROPIC_VERTEX_PROJECT_ID=\"\""
+    echo "  export GOOGLE_CLOUD_PROJECT=\"\""
     echo ""
     echo "  # Then run: claude"
     echo ""
@@ -114,6 +117,9 @@ else
     exec env \
         ANTHROPIC_BASE_URL="$GATEWAY_URL" \
         ANTHROPIC_API_KEY="$JWT" \
-        DISABLE_PROMPT_CACHING=1 \
-        claude
+        CLAUDE_CODE_USE_VERTEX="" \
+        CLOUD_ML_REGION="" \
+        ANTHROPIC_VERTEX_PROJECT_ID="" \
+        GOOGLE_CLOUD_PROJECT="" \
+        claude --settings '{"env":{"CLAUDE_CODE_USE_VERTEX":"","ANTHROPIC_VERTEX_PROJECT_ID":""}}'
 fi
