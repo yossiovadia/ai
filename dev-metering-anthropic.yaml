@@ -1,0 +1,89 @@
+# Metered Anthropic Gateway with JWT Auth
+#
+# Full pipeline: Keycloak JWT auth → identity capture → metering →
+# token counting → credential injection → Anthropic Messages API
+#
+# Usage:
+#   source dev-anthropic.env   # set ANTHROPIC_API_KEY
+#   ./target/debug/praxis-ai -c dev-metering-anthropic.yaml
+#
+# Get a token and send a request:
+#   JWT=$(curl -s $KC_URL/realms/$KC_REALM/protocol/openid-connect/token \
+#     -d "client_id=$KC_CLIENT" -d "username=yossi" -d "password=test123" \
+#     -d "grant_type=password" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+#
+#   curl http://127.0.0.1:8180/v1/messages \
+#     -H "Authorization: Bearer $JWT" \
+#     -H "Content-Type: application/json" \
+#     -H "anthropic-version: 2023-06-01" \
+#     -d '{"model":"claude-haiku-4-5-20251001","max_tokens":64,"messages":[{"role":"user","content":"Hi"}]}'
+
+listeners:
+  - name: gateway
+    address: "127.0.0.1:8180"
+    filter_chains:
+      - main
+
+filter_chains:
+  - name: main
+    filters:
+      # 1. Validate JWT from Keycloak, inject identity headers.
+      - filter: jwt_auth
+        jwks_url: "http://127.0.0.1:8280/realms/ai-gateway/protocol/openid-connect/certs"
+        issuer: "http://127.0.0.1:8280/realms/ai-gateway"
+        token_header: "x-api-key"
+        claim_headers:
+          preferred_username: "x-tenant-username"
+          groups: "x-tenant-group"
+          email: "x-tenant-email"
+
+      # 2. Capture identity headers → metadata, strip before upstream.
+      - filter: identity_header_guard
+        prefix: "x-tenant-"
+
+      # 3. Route everything to Anthropic.
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: anthropic
+
+      # 4. Metering (before token_count — response hooks reverse).
+      - filter: external_metering
+        metering_url: "http://127.0.0.1:9090"
+        timeout_seconds: 5
+        feature_key: "inference-tokens"
+        source: "praxis-ai"
+        fail_open: true
+        identity_header_prefix: "x-tenant-"
+        default_model: "unknown"
+
+      # 5. Token counting for Anthropic responses.
+      - filter: token_count
+        provider: anthropic
+
+      - filter: token_usage_headers
+
+      # 6. Inject the real Anthropic API key, strip client's JWT.
+      - filter: credential_injection
+        clusters:
+          - name: anthropic
+            header: x-api-key
+            env_var: ANTHROPIC_API_KEY
+            strip_client_credential: true
+
+      # 7. Set required Anthropic headers.
+      - filter: headers
+        request_set:
+          - name: "Host"
+            value: "api.anthropic.com"
+          - name: "anthropic-version"
+            value: "2023-06-01"
+
+      # 8. TLS to Anthropic.
+      - filter: load_balancer
+        clusters:
+          - name: anthropic
+            tls:
+              sni: "api.anthropic.com"
+            endpoints:
+              - "api.anthropic.com:443"

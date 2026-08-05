@@ -119,7 +119,11 @@ impl JwtAuthFilter {
         }))
     }
 
-    /// Extract the bearer token from the configured header.
+    /// Extract the JWT from the configured header.
+    ///
+    /// Handles both `Authorization: Bearer <token>` and raw
+    /// `x-api-key: <token>` formats. Strips the "Bearer " prefix
+    /// if present, otherwise uses the raw value.
     fn extract_token<'a>(&self, ctx: &'a HttpFilterContext<'_>) -> Option<&'a str> {
         let value = ctx.request.headers.get(&*self.token_header)?;
         let value_str = value.to_str().ok()?;
@@ -128,6 +132,8 @@ impl JwtAuthFilter {
             && value_str[..BEARER_PREFIX.len()].eq_ignore_ascii_case(BEARER_PREFIX)
         {
             Some(&value_str[BEARER_PREFIX.len()..])
+        } else if !value_str.is_empty() {
+            Some(value_str)
         } else {
             None
         }
