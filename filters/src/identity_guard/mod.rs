@@ -113,15 +113,14 @@ impl HttpFilter for IdentityHeaderGuardFilter {
             }
 
             if let Ok(val) = value.to_str() {
-                // Namespaced key for structured consumers.
+                // Namespaced key only. The guard must NOT write
+                // unnamespaced keys — jwt_auth writes those from
+                // verified claims, and overwriting them here would
+                // launder client-spoofed headers into the trusted
+                // metadata namespace.
                 let namespaced = format!("{}.{}", self.namespace, name_lower);
                 ctx.filter_metadata
                     .insert(namespaced, val.to_owned());
-                // Unnamespaced key matching the header name, so
-                // external_metering can read it with the same
-                // prefix-based lookup it uses for request headers.
-                ctx.filter_metadata
-                    .insert(name_lower.clone(), val.to_owned());
                 captured += 1;
             }
 

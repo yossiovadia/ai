@@ -574,7 +574,8 @@ fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Ident
     let prefix_lower = prefix.to_ascii_lowercase();
     let mut identity = Identity::default();
 
-    // 1. Trusted path: filter_metadata (set by jwt_auth).
+    // 1. Verified path: unnamespaced metadata (set by jwt_auth
+    //    from verified JWT claims). Highest trust.
     if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}username")) {
         identity.username.clone_from(val);
     }
@@ -586,6 +587,20 @@ fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Ident
     }
     if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}model")) {
         identity.model.clone_from(val);
+    }
+
+    // 2. Namespaced path: identity.{prefix}* (set by
+    //    identity_header_guard from captured request headers).
+    //    Only used when jwt_auth is not in the pipeline.
+    if identity.username.is_empty() {
+        if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}username")) {
+            identity.username.clone_from(val);
+        }
+    }
+    if identity.group.is_empty() {
+        if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}group")) {
+            identity.group.clone_from(val);
+        }
     }
 
     // 2. Fallback: request headers (set by Authorino or similar).

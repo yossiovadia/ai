@@ -50,8 +50,9 @@ struct CachedKeys {
     /// Decoding keys by `kid`.
     by_kid: HashMap<String, (DecodingKey, Algorithm)>,
 
-    /// When the cache was last refreshed.
-    last_refresh: Instant,
+    /// When the cache was last refreshed. `None` means never
+    /// refreshed — forces immediate fetch on first request.
+    last_refresh: Option<Instant>,
 }
 
 impl JwksCache {
@@ -68,7 +69,7 @@ impl JwksCache {
         Ok(Self {
             keys: Arc::new(RwLock::new(CachedKeys {
                 by_kid: HashMap::new(),
-                last_refresh: Instant::now().checked_sub(DEFAULT_TTL).unwrap_or_else(Instant::now),
+                last_refresh: None,
             })),
             client,
             url,
@@ -80,39 +81,38 @@ impl JwksCache {
     /// - the cache TTL has expired (ensures revoked keys stop
     ///   working within one TTL window).
     pub(super) async fn get_key(&self, kid: &str) -> Option<(DecodingKey, Algorithm)> {
-        // Check if TTL expired — refresh proactively so revoked
-        // keys stop working within one TTL window.
+        // Fast path: key is cached and TTL hasn't expired.
         {
             let keys = self.keys.read().await;
-            if keys.last_refresh.elapsed() >= DEFAULT_TTL {
-                drop(keys);
-                if let Err(e) = self.refresh().await {
-                    warn!("JWKS TTL refresh failed: {e}");
+            let ttl_ok = keys
+                .last_refresh
+                .map_or(false, |t| t.elapsed() < DEFAULT_TTL);
+            if ttl_ok {
+                if let Some(entry) = keys.by_kid.get(kid) {
+                    return Some(entry.clone());
                 }
             }
         }
 
-        // Fast path: key is cached
+        // Need refresh — either TTL expired, never fetched, or
+        // unknown kid. All paths share the same cooldown to
+        // prevent stampede when the IdP is down.
         {
             let keys = self.keys.read().await;
-            if let Some(entry) = keys.by_kid.get(kid) {
-                return Some(entry.clone());
+            let cooldown_active = keys
+                .last_refresh
+                .map_or(false, |t| t.elapsed() < REFRESH_COOLDOWN);
+            if cooldown_active {
+                return keys.by_kid.get(kid).cloned();
             }
         }
 
-        // Slow path: unknown kid, try refreshing
-        {
-            let keys = self.keys.read().await;
-            if keys.last_refresh.elapsed() < REFRESH_COOLDOWN {
-                debug!(kid, "unknown kid, cooldown active");
-                return None;
-            }
-        }
-
-        debug!(kid, "unknown kid, refreshing JWKS");
+        debug!(kid, "refreshing JWKS");
         if let Err(e) = self.refresh().await {
             warn!("JWKS refresh failed: {e}");
-            return None;
+            // Use stale cache on failure.
+            let keys = self.keys.read().await;
+            return keys.by_kid.get(kid).cloned();
         }
 
         let keys = self.keys.read().await;
@@ -120,7 +120,17 @@ impl JwksCache {
     }
 
     /// Fetch JWKS from the endpoint and update the cache.
+    ///
+    /// Updates `last_refresh` on both success and failure so the
+    /// cooldown prevents stampede when the IdP is down.
     async fn refresh(&self) -> Result<(), String> {
+        // Update timestamp first so concurrent callers see the
+        // cooldown immediately, even if the fetch fails.
+        {
+            let mut keys = self.keys.write().await;
+            keys.last_refresh = Some(Instant::now());
+        }
+
         let resp = self
             .client
             .get(&self.url)
@@ -158,8 +168,12 @@ impl JwksCache {
                 Some(jsonwebtoken::jwk::KeyAlgorithm::RS512) => Algorithm::RS512,
                 Some(jsonwebtoken::jwk::KeyAlgorithm::ES256) => Algorithm::ES256,
                 Some(jsonwebtoken::jwk::KeyAlgorithm::ES384) => Algorithm::ES384,
-                // Azure AD omits `alg` — infer RS256 from key type.
-                None => Algorithm::RS256,
+                // Azure AD omits `alg` — infer from key type.
+                None => match &jwk.algorithm {
+                    jsonwebtoken::jwk::AlgorithmParameters::RSA(_) => Algorithm::RS256,
+                    jsonwebtoken::jwk::AlgorithmParameters::EllipticCurve(_) => Algorithm::ES256,
+                    _ => continue,
+                },
                 _ => continue,
             };
 
@@ -177,7 +191,7 @@ impl JwksCache {
 
         let mut keys = self.keys.write().await;
         keys.by_kid = by_kid;
-        keys.last_refresh = Instant::now();
+        keys.last_refresh = Some(Instant::now());
 
         Ok(())
     }
