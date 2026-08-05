@@ -29,6 +29,7 @@ dashmap = "6.2.1"
 futures = "0.3.32"
 h2 = "0.4.15"
 http = "1.4.2"
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
 nix = { version = "0.31.3", default-features = false, features = ["process", "signal", "user"] }
 percent-encoding = "2.3.2"
 notify = "8.2.0"
