@@ -589,38 +589,61 @@ fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Ident
         identity.model.clone_from(val);
     }
 
+    // If ANY verified identity was found in metadata, skip all
+    // lower-trust sources entirely. This prevents a client from
+    // spoofing subscription/model via forged headers alongside
+    // a valid JWT that only maps username/group.
+    let has_verified_identity = !identity.username.is_empty();
+
     // 2. Namespaced path: identity.{prefix}* (set by
     //    identity_header_guard from captured request headers).
     //    Only used when jwt_auth is not in the pipeline.
-    if identity.username.is_empty() {
+    if !has_verified_identity {
         if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}username")) {
             identity.username.clone_from(val);
         }
-    }
-    if identity.group.is_empty() {
         if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}group")) {
             identity.group.clone_from(val);
         }
+        if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}subscription")) {
+            identity.subscription.clone_from(val);
+        }
+        if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}model")) {
+            identity.model.clone_from(val);
+        }
     }
 
-    // 2. Fallback: request headers (set by Authorino or similar).
-    //    Only used when metadata is empty (no jwt_auth in pipeline).
-    for (key, value) in &ctx.request.headers {
-        let key_lower = key.as_str().to_ascii_lowercase();
-        let Some(suffix) = key_lower.strip_prefix(prefix_lower.as_str()) else {
-            continue;
-        };
-        let val = value.to_str().unwrap_or_default();
+    // 3. Raw header fallback (set by Authorino or similar).
+    //    Only used when NO metadata identity was found at all.
+    if !has_verified_identity && identity.username.is_empty() {
+        for (key, value) in &ctx.request.headers {
+            let key_lower = key.as_str().to_ascii_lowercase();
+            let Some(suffix) = key_lower.strip_prefix(prefix_lower.as_str()) else {
+                continue;
+            };
+            let val = value.to_str().unwrap_or_default();
 
-        match suffix {
-            "group" if identity.group.is_empty() => val.clone_into(&mut identity.group),
-            "model" if identity.model.is_empty() => val.clone_into(&mut identity.model),
-            "subscription" if identity.subscription.is_empty() => val.clone_into(&mut identity.subscription),
-            "username" if identity.username.is_empty() => val.clone_into(&mut identity.username),
-            _ => {},
+            match suffix {
+                "group" if identity.group.is_empty() => val.clone_into(&mut identity.group),
+                "model" if identity.model.is_empty() => val.clone_into(&mut identity.model),
+                "subscription" if identity.subscription.is_empty() => {
+                    val.clone_into(&mut identity.subscription);
+                },
+                "username" if identity.username.is_empty() => val.clone_into(&mut identity.username),
+                _ => {},
+            }
+
+            ctx.request_headers_to_remove.push(key.clone());
         }
-
-        ctx.request_headers_to_remove.push(key.clone());
+    } else {
+        // Still strip identity headers even when not using them,
+        // to prevent leakage to the upstream provider.
+        for (key, _) in &ctx.request.headers {
+            let key_lower = key.as_str().to_ascii_lowercase();
+            if key_lower.starts_with(prefix_lower.as_str()) {
+                ctx.request_headers_to_remove.push(key.clone());
+            }
+        }
     }
 
     identity
