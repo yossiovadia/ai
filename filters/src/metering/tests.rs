@@ -280,6 +280,84 @@ fn missing_username_returns_empty() {
 }
 
 #[test]
+fn verified_identity_ignores_forged_headers_and_guard_metadata() {
+    let mut req = make_request(http::Method::POST, "/v1/chat/completions");
+    // Client-forged headers alongside a valid JWT.
+    req.headers
+        .insert("x-tenant-subscription", "sub-forged".parse().unwrap());
+    req.headers.insert("x-tenant-model", "model-forged".parse().unwrap());
+
+    let mut ctx = make_filter_context(&req);
+    // Verified claims written by jwt_auth (unnamespaced).
+    ctx.filter_metadata
+        .insert("x-tenant-username".to_owned(), "alice".to_owned());
+    ctx.filter_metadata
+        .insert("x-tenant-group".to_owned(), "engineering".to_owned());
+    // Guard-captured copies of the forged headers (namespaced).
+    ctx.filter_metadata
+        .insert("identity.x-tenant-subscription".to_owned(), "sub-forged".to_owned());
+    ctx.filter_metadata
+        .insert("identity.x-tenant-model".to_owned(), "model-forged".to_owned());
+
+    let state = capture_identity(&mut ctx, "x-tenant-");
+
+    assert_eq!(state.username, "alice");
+    assert_eq!(state.group, "engineering");
+    assert!(
+        state.subscription.is_empty(),
+        "forged subscription must be ignored when identity is verified: {}",
+        state.subscription
+    );
+    assert!(
+        state.model.is_empty(),
+        "forged model must be ignored when identity is verified: {}",
+        state.model
+    );
+}
+
+#[test]
+fn guard_metadata_supplies_identity_without_verified_claims() {
+    let req = make_request(http::Method::POST, "/v1/chat/completions");
+    let mut ctx = make_filter_context(&req);
+    ctx.filter_metadata
+        .insert("identity.x-tenant-username".to_owned(), "bob".to_owned());
+    ctx.filter_metadata
+        .insert("identity.x-tenant-group".to_owned(), "ml".to_owned());
+    ctx.filter_metadata
+        .insert("identity.x-tenant-subscription".to_owned(), "sub-7".to_owned());
+    ctx.filter_metadata
+        .insert("identity.x-tenant-model".to_owned(), "claude-3".to_owned());
+
+    let state = capture_identity(&mut ctx, "x-tenant-");
+
+    assert_eq!(state.username, "bob");
+    assert_eq!(state.group, "ml");
+    assert_eq!(state.subscription, "sub-7");
+    assert_eq!(state.model, "claude-3");
+}
+
+#[test]
+fn guard_identity_blocks_raw_header_fallback() {
+    let mut req = make_request(http::Method::POST, "/v1/chat/completions");
+    // Raw header not captured by the guard — anomalous, must not
+    // be trusted once any metadata identity exists.
+    req.headers.insert("x-tenant-subscription", "raw-sub".parse().unwrap());
+
+    let mut ctx = make_filter_context(&req);
+    ctx.filter_metadata
+        .insert("identity.x-tenant-username".to_owned(), "bob".to_owned());
+
+    let state = capture_identity(&mut ctx, "x-tenant-");
+
+    assert_eq!(state.username, "bob");
+    assert!(
+        state.subscription.is_empty(),
+        "raw header must be ignored when guard metadata identity exists: {}",
+        state.subscription
+    );
+}
+
+#[test]
 fn group_falls_back_to_subscription() {
     let mut req = make_request(http::Method::POST, "/v1/chat/completions");
     req.headers.insert("x-tenant-username", "alice".parse().unwrap());

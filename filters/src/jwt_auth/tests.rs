@@ -152,6 +152,48 @@ claim_headers:
 }
 
 #[tokio::test]
+async fn valid_token_queues_token_header_for_removal() {
+    let kid = "test-kid-strip";
+
+    let server = MockServer::start().await;
+    Mock::given(path("/certs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response(kid)))
+        .mount(&server)
+        .await;
+
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!(
+        r#"
+jwks_url: "{}/certs"
+token_header: "x-api-key"
+claim_headers:
+  sub: "x-tenant-username"
+"#,
+        server.uri()
+    ))
+    .unwrap();
+    let filter = super::JwtAuthFilter::from_config(&yaml).unwrap();
+
+    let claims = json!({
+        "sub": "user-123",
+        "iss": "test",
+        "exp": chrono::Utc::now().timestamp() + 3600
+    });
+    let token = mint_token(kid, &claims);
+
+    let mut req = make_request(Method::POST, "/v1/messages");
+    req.headers.insert("x-api-key", HeaderValue::from_str(&token).unwrap());
+
+    let mut ctx = make_filter_context(&req);
+    let action = filter.on_request(&mut ctx).await.unwrap();
+
+    assert!(matches!(action, FilterAction::Continue), "valid token should continue");
+    assert!(
+        ctx.request_headers_to_remove.iter().any(|h| h.as_str() == "x-api-key"),
+        "token header should be queued for removal so the JWT does not leak upstream"
+    );
+}
+
+#[tokio::test]
 async fn expired_token_rejected() {
     let kid = "test-kid-2";
 
