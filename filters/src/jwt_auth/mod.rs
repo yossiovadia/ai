@@ -4,7 +4,7 @@
 //! JWT authentication filter: validates bearer tokens against a
 //! JWKS endpoint and injects verified claims as request headers.
 //!
-//! The filter downloads public keys from the IdP's JWKS endpoint
+//! The filter downloads public keys from the `IdP`'s JWKS endpoint
 //! at startup (and refreshes on unknown `kid`), validates the JWT
 //! signature locally (no per-request callout), and extracts
 //! configured claims into request headers for downstream filters.
@@ -18,6 +18,8 @@ mod jwks;
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
 #[allow(
+    clippy::panic,
+    clippy::too_many_lines,
     clippy::unwrap_used,
     clippy::expect_used,
     reason = "tests"
@@ -27,14 +29,13 @@ mod tests;
 use async_trait::async_trait;
 use bytes::Bytes;
 use jsonwebtoken::{TokenData, Validation, decode};
-use praxis_filter::{
-    FilterAction, FilterError, HttpFilter, HttpFilterContext, Rejection,
-    parse_filter_config,
-};
+use praxis_filter::{FilterAction, FilterError, HttpFilter, HttpFilterContext, Rejection, parse_filter_config};
 use tracing::debug;
 
-use self::config::{JwtAuthConfig, validate_config};
-use self::jwks::JwksCache;
+use self::{
+    config::{JwtAuthConfig, validate_config},
+    jwks::JwksCache,
+};
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -93,20 +94,14 @@ impl JwtAuthFilter {
     ///
     /// Returns [`FilterError`] if config parsing fails, validation
     /// fails, or the initial JWKS fetch fails.
-    pub fn from_config(
-        value: &serde_yaml::Value,
-    ) -> Result<Box<dyn HttpFilter>, FilterError> {
+    pub fn from_config(value: &serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError> {
         let config: JwtAuthConfig = parse_filter_config("jwt_auth", value)?;
         validate_config(&config).map_err(|e| -> FilterError { e.into() })?;
 
         let jwks_url = config.jwks_url.clone();
-        let claim_headers: Vec<(String, String)> = config
-            .claim_headers
-            .into_iter()
-            .collect();
+        let claim_headers: Vec<(String, String)> = config.claim_headers.into_iter().collect();
 
-        let jwks = JwksCache::new(jwks_url)
-            .map_err(|e| -> FilterError { e.into() })?;
+        let jwks = JwksCache::new(jwks_url).map_err(|e| -> FilterError { e.into() })?;
 
         Ok(Box::new(Self {
             jwks,
@@ -127,9 +122,11 @@ impl JwtAuthFilter {
         let value_str = value.to_str().ok()?;
 
         if value_str.len() > BEARER_PREFIX.len()
-            && value_str[..BEARER_PREFIX.len()].eq_ignore_ascii_case(BEARER_PREFIX)
+            && value_str
+                .get(..BEARER_PREFIX.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(BEARER_PREFIX))
         {
-            Some(&value_str[BEARER_PREFIX.len()..])
+            value_str.get(BEARER_PREFIX.len()..)
         } else if !value_str.is_empty() {
             Some(value_str)
         } else {
@@ -144,10 +141,11 @@ impl HttpFilter for JwtAuthFilter {
         "jwt_auth"
     }
 
-    async fn on_request(
-        &self,
-        ctx: &mut HttpFilterContext<'_>,
-    ) -> Result<FilterAction, FilterError> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "sequential validation pipeline with early-return branches"
+    )]
+    async fn on_request(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
         // 1. Extract the bearer token
         let Some(token) = self.extract_token(ctx) else {
             debug!("no bearer token found, rejecting");
@@ -193,16 +191,21 @@ impl HttpFilter for JwtAuthFilter {
         }
 
         // 5. Validate the token
-        let token_data: TokenData<serde_json::Value> =
-            match decode(token, &decoding_key, &validation) {
-                Ok(data) => data,
-                Err(e) => {
-                    debug!("JWT validation failed: {e}");
-                    return Ok(reject_unauthorized("invalid token"));
-                },
-            };
+        let token_data: TokenData<serde_json::Value> = match decode(token, &decoding_key, &validation) {
+            Ok(data) => data,
+            Err(e) => {
+                debug!("JWT validation failed: {e}");
+                return Ok(reject_unauthorized("invalid token"));
+            },
+        };
 
-        // 6. Extract claims to filter_metadata only.
+        // 6. Strip the token header so the JWT doesn't leak to the upstream provider. credential_injection will add the
+        //    real provider key later.
+        if let Ok(name) = http::HeaderName::from_bytes(self.token_header.as_bytes()) {
+            ctx.request_headers_to_remove.push(name);
+        }
+
+        // 7. Extract claims to filter_metadata only.
         //
         //    Identity is NOT injected into extra_request_headers
         //    because those are added to the upstream request after
@@ -218,10 +221,7 @@ impl HttpFilter for JwtAuthFilter {
                 let header_value = match value {
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Array(arr) => {
-                        let parts: Vec<&str> = arr
-                            .iter()
-                            .filter_map(|v| v.as_str())
-                            .collect();
+                        let parts: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
                         parts.join(",")
                     },
                     other => other.to_string(),
@@ -247,14 +247,12 @@ impl HttpFilter for JwtAuthFilter {
 // Helpers
 // -----------------------------------------------------------------------------
 
+/// Build a 401 rejection with a `WWW-Authenticate: Bearer` header.
 fn reject_unauthorized(message: &'static str) -> FilterAction {
     FilterAction::Reject(Rejection {
         status: 401,
         body: Some(Bytes::from(message)),
-        headers: vec![(
-            "WWW-Authenticate".to_owned(),
-            "Bearer".to_owned(),
-        )],
+        headers: vec![("WWW-Authenticate".to_owned(), "Bearer".to_owned())],
         header_map: None,
         preserve_keepalive: false,
     })

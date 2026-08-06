@@ -48,6 +48,7 @@ pub(super) struct JwtAuthConfig {
     pub token_header: String,
 }
 
+/// Returns the default bearer token header name (`authorization`).
 fn default_token_header() -> String {
     "authorization".to_owned()
 }
@@ -56,6 +57,7 @@ fn default_token_header() -> String {
 // Validation
 // -----------------------------------------------------------------------------
 
+/// Validate a [`JwtAuthConfig`], returning an error on missing required fields.
 pub(super) fn validate_config(config: &JwtAuthConfig) -> Result<(), String> {
     if config.jwks_url.is_empty() {
         return Err("jwt_auth: jwks_url must not be empty".into());

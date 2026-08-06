@@ -3,17 +3,18 @@
 
 //! JWKS (JSON Web Key Set) fetching and caching.
 //!
-//! Downloads public keys from the IdP's JWKS endpoint, caches them
+//! Downloads public keys from the `IdP`'s JWKS endpoint, caches them
 //! by `kid` (Key ID), and provides lookup for JWT verification.
 //! Keys are refreshed when an unknown `kid` is encountered (with
 //! a cooldown to prevent abuse) or when the cache TTL expires.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use jsonwebtoken::jwk::JwkSet;
-use jsonwebtoken::{DecodingKey, Algorithm};
+use jsonwebtoken::{Algorithm, DecodingKey, jwk::JwkSet};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
@@ -46,6 +47,7 @@ pub(super) struct JwksCache {
     url: String,
 }
 
+/// Cached JWKS decoding keys and their refresh timestamp.
 struct CachedKeys {
     /// Decoding keys by `kid`.
     by_kid: HashMap<String, (DecodingKey, Algorithm)>,
@@ -82,19 +84,14 @@ impl JwksCache {
 
     /// Look up a decoding key by `kid`. Refreshes when:
     /// - the `kid` is unknown and the cooldown has elapsed, or
-    /// - the cache TTL has expired (ensures revoked keys stop
-    ///   working within one TTL window).
+    /// - the cache TTL has expired (ensures revoked keys stop working within one TTL window).
     pub(super) async fn get_key(&self, kid: &str) -> Option<(DecodingKey, Algorithm)> {
         // Fast path: key is cached and TTL hasn't expired.
         {
             let keys = self.keys.read().await;
-            let ttl_ok = keys
-                .last_refresh
-                .map_or(false, |t| t.elapsed() < DEFAULT_TTL);
-            if ttl_ok {
-                if let Some(entry) = keys.by_kid.get(kid) {
-                    return Some(entry.clone());
-                }
+            let ttl_ok = keys.last_refresh.is_some_and(|t| t.elapsed() < DEFAULT_TTL);
+            if ttl_ok && let Some(entry) = keys.by_kid.get(kid) {
+                return Some(entry.clone());
             }
         }
 
@@ -103,9 +100,7 @@ impl JwksCache {
         // prevent stampede when the IdP is down.
         {
             let keys = self.keys.read().await;
-            let cooldown_active = keys
-                .last_refresh
-                .map_or(false, |t| t.elapsed() < REFRESH_COOLDOWN);
+            let cooldown_active = keys.last_refresh.is_some_and(|t| t.elapsed() < REFRESH_COOLDOWN);
             if cooldown_active {
                 return keys.by_kid.get(kid).cloned();
             }
@@ -126,7 +121,11 @@ impl JwksCache {
     /// Fetch JWKS from the endpoint and update the cache.
     ///
     /// Updates `last_refresh` on both success and failure so the
-    /// cooldown prevents stampede when the IdP is down.
+    /// cooldown prevents stampede when the `IdP` is down.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "fetch-parse-update pipeline with error handling at each step"
+    )]
     async fn refresh(&self) -> Result<(), String> {
         // Update timestamp first so concurrent callers see the
         // cooldown immediately, even if the fetch fails.
@@ -146,20 +145,13 @@ impl JwksCache {
             return Err(format!("JWKS endpoint returned {}", resp.status()));
         }
 
-        let body = resp
-            .bytes()
-            .await
-            .map_err(|e| format!("JWKS read failed: {e}"))?;
+        let body = resp.bytes().await.map_err(|e| format!("JWKS read failed: {e}"))?;
 
         if body.len() > MAX_JWKS_BYTES {
-            return Err(format!(
-                "JWKS response too large: {} bytes",
-                body.len()
-            ));
+            return Err(format!("JWKS response too large: {} bytes", body.len()));
         }
 
-        let jwk_set: JwkSet = serde_json::from_slice(&body)
-            .map_err(|e| format!("JWKS parse failed: {e}"))?;
+        let jwk_set: JwkSet = serde_json::from_slice(&body).map_err(|e| format!("JWKS parse failed: {e}"))?;
 
         let mut by_kid = HashMap::new();
         for jwk in &jwk_set.keys {
@@ -196,6 +188,7 @@ impl JwksCache {
         let mut keys = self.keys.write().await;
         keys.by_kid = by_kid;
         keys.last_refresh = Some(Instant::now());
+        drop(keys);
 
         Ok(())
     }

@@ -7,8 +7,7 @@ use http::{HeaderValue, Method};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use praxis_filter::FilterAction;
 use serde_json::json;
-use wiremock::matchers::path;
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
 
 use crate::test_utils::{make_filter_context, make_request};
 
@@ -103,15 +102,11 @@ bogus_field: true
 
 #[tokio::test]
 async fn valid_token_passes_and_writes_metadata() {
-    
     let kid = "test-kid-1";
 
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response(kid)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response(kid)))
         .mount(&server)
         .await;
 
@@ -143,10 +138,7 @@ claim_headers:
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();
 
-    assert!(
-        matches!(action, FilterAction::Continue),
-        "valid token should continue"
-    );
+    assert!(matches!(action, FilterAction::Continue), "valid token should continue");
     assert_eq!(
         ctx.filter_metadata.get("x-tenant-username"),
         Some(&"yossi".to_owned()),
@@ -161,15 +153,11 @@ claim_headers:
 
 #[tokio::test]
 async fn expired_token_rejected() {
-    
     let kid = "test-kid-2";
 
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response(kid)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response(kid)))
         .mount(&server)
         .await;
 
@@ -205,15 +193,11 @@ claim_headers:
 
 #[tokio::test]
 async fn wrong_issuer_rejected() {
-    
     let kid = "test-kid-3";
 
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response(kid)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response(kid)))
         .mount(&server)
         .await;
 
@@ -251,14 +235,9 @@ claim_headers:
 
 #[tokio::test]
 async fn unknown_kid_rejected() {
-    
-
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response("published-kid")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response("published-kid")))
         .mount(&server)
         .await;
 
@@ -294,14 +273,9 @@ claim_headers:
 
 #[tokio::test]
 async fn missing_token_rejected() {
-    
-
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response("kid")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response("kid")))
         .mount(&server)
         .await;
 
@@ -329,14 +303,9 @@ claim_headers:
 
 #[tokio::test]
 async fn garbage_token_rejected() {
-    
-
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response("kid")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response("kid")))
         .mount(&server)
         .await;
 
@@ -353,7 +322,8 @@ claim_headers:
     let filter = super::JwtAuthFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/messages");
-    req.headers.insert("x-api-key", HeaderValue::from_static("not.a.jwt.at.all"));
+    req.headers
+        .insert("x-api-key", HeaderValue::from_static("not.a.jwt.at.all"));
 
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();
@@ -366,15 +336,11 @@ claim_headers:
 
 #[tokio::test]
 async fn bearer_prefix_extraction() {
-    
     let kid = "test-kid-bearer";
 
     let server = MockServer::start().await;
     Mock::given(path("/certs"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(build_jwks_response(kid)),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(build_jwks_response(kid)))
         .mount(&server)
         .await;
 
@@ -398,7 +364,8 @@ claim_headers:
     let bearer = format!("Bearer {token}");
 
     let mut req = make_request(Method::POST, "/v1/messages");
-    req.headers.insert("authorization", HeaderValue::from_str(&bearer).unwrap());
+    req.headers
+        .insert("authorization", HeaderValue::from_str(&bearer).unwrap());
 
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();

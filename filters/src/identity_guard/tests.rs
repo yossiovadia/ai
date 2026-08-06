@@ -15,8 +15,7 @@ use crate::test_utils::{make_filter_context, make_request};
 
 #[test]
 fn from_config_minimal() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
     assert_eq!(
         filter.name(),
@@ -35,17 +34,12 @@ metadata_namespace: "maas"
     )
     .unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
-    assert_eq!(
-        filter.name(),
-        "identity_header_guard",
-        "full config should parse"
-    );
+    assert_eq!(filter.name(), "identity_header_guard", "full config should parse");
 }
 
 #[test]
 fn from_config_rejects_empty_prefix() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: """#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: """#).unwrap();
     match IdentityHeaderGuardFilter::from_config(&yaml) {
         Err(err) => assert!(
             err.to_string().contains("prefix must not be empty"),
@@ -72,8 +66,7 @@ bogus_field: true
 
 #[test]
 fn from_config_defaults_namespace_to_identity() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
     assert_eq!(filter.name(), "identity_header_guard");
 }
@@ -84,21 +77,18 @@ fn from_config_defaults_namespace_to_identity() {
 
 #[tokio::test]
 async fn captures_matching_headers_to_metadata() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/chat/completions");
-    req.headers.insert("x-tenant-username", HeaderValue::from_static("yossi"));
+    req.headers
+        .insert("x-tenant-username", HeaderValue::from_static("yossi"));
     req.headers.insert("x-tenant-group", HeaderValue::from_static("ai-eng"));
 
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();
 
-    assert!(
-        matches!(action, FilterAction::Continue),
-        "should continue the pipeline"
-    );
+    assert!(matches!(action, FilterAction::Continue), "should continue the pipeline");
     assert_eq!(
         ctx.filter_metadata.get("identity.x-tenant-username"),
         Some(&"yossi".to_owned()),
@@ -113,16 +103,17 @@ async fn captures_matching_headers_to_metadata() {
 
 #[tokio::test]
 async fn strips_matching_headers_from_upstream() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/messages");
-    req.headers.insert("x-tenant-username", HeaderValue::from_static("yossi"));
-    req.headers.insert("content-type", HeaderValue::from_static("application/json"));
+    req.headers
+        .insert("x-tenant-username", HeaderValue::from_static("yossi"));
+    req.headers
+        .insert("content-type", HeaderValue::from_static("application/json"));
 
     let mut ctx = make_filter_context(&req);
-    filter.on_request(&mut ctx).await.unwrap();
+    let _action = filter.on_request(&mut ctx).await.unwrap();
 
     assert!(
         ctx.request_headers_to_remove
@@ -140,16 +131,17 @@ async fn strips_matching_headers_from_upstream() {
 
 #[tokio::test]
 async fn ignores_non_matching_headers() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/chat/completions");
-    req.headers.insert("authorization", HeaderValue::from_static("Bearer sk-123"));
-    req.headers.insert("content-type", HeaderValue::from_static("application/json"));
+    req.headers
+        .insert("authorization", HeaderValue::from_static("Bearer sk-123"));
+    req.headers
+        .insert("content-type", HeaderValue::from_static("application/json"));
 
     let mut ctx = make_filter_context(&req);
-    filter.on_request(&mut ctx).await.unwrap();
+    let _action = filter.on_request(&mut ctx).await.unwrap();
 
     assert!(
         ctx.filter_metadata.is_empty(),
@@ -163,15 +155,15 @@ async fn ignores_non_matching_headers() {
 
 #[tokio::test]
 async fn case_insensitive_prefix_matching() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/chat/completions");
-    req.headers.insert("X-Tenant-Username", HeaderValue::from_static("yossi"));
+    req.headers
+        .insert("X-Tenant-Username", HeaderValue::from_static("yossi"));
 
     let mut ctx = make_filter_context(&req);
-    filter.on_request(&mut ctx).await.unwrap();
+    let _action = filter.on_request(&mut ctx).await.unwrap();
 
     assert_eq!(
         ctx.filter_metadata.get("identity.x-tenant-username"),
@@ -195,7 +187,7 @@ metadata_namespace: "maas"
     req.headers.insert("x-maas-username", HeaderValue::from_static("alice"));
 
     let mut ctx = make_filter_context(&req);
-    filter.on_request(&mut ctx).await.unwrap();
+    let _action = filter.on_request(&mut ctx).await.unwrap();
 
     assert_eq!(
         ctx.filter_metadata.get("maas.x-maas-username"),
@@ -203,23 +195,19 @@ metadata_namespace: "maas"
         "should use custom namespace"
     );
     assert!(
-        ctx.filter_metadata.get("identity.x-maas-username").is_none(),
+        !ctx.filter_metadata.contains_key("identity.x-maas-username"),
         "should NOT use default namespace"
     );
 }
 
 #[tokio::test]
 async fn no_headers_means_empty_metadata() {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
+    let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
     let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
 
     let req = make_request(Method::POST, "/v1/chat/completions");
     let mut ctx = make_filter_context(&req);
-    filter.on_request(&mut ctx).await.unwrap();
+    let _action = filter.on_request(&mut ctx).await.unwrap();
 
-    assert!(
-        ctx.filter_metadata.is_empty(),
-        "no identity headers means no metadata"
-    );
+    assert!(ctx.filter_metadata.is_empty(), "no identity headers means no metadata");
 }

@@ -15,15 +15,8 @@ use std::collections::HashMap;
 
 #[test]
 fn jwt_auth_config_parses() {
-    let config = super::load_example_config(
-        "jwt-auth.yaml",
-        29930,
-        HashMap::from([("127.0.0.1:3000", 29931_u16)]),
-    );
+    let config = super::load_example_config("jwt-auth.yaml", 29930, HashMap::from([("127.0.0.1:3000", 29931_u16)]));
 
     assert_eq!(config.listeners.len(), 1, "should have 1 listener");
-    assert_eq!(
-        &*config.listeners[0].name, "gateway",
-        "listener name should be gateway"
-    );
+    assert_eq!(&*config.listeners[0].name, "gateway", "listener name should be gateway");
 }

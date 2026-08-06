@@ -51,31 +51,42 @@ use self::config::{ExternalMeteringConfig, validate_config};
 
 /// Thin HTTP client for metering callouts.
 struct MeteringClient {
+    /// Inner HTTP client with configured timeout.
     client: reqwest::Client,
 }
 
 /// Result of a metering callout.
 enum CalloutResult {
+    /// The remote returned a 2xx status.
     Success(CalloutResponse),
+    /// The request failed at the transport level.
     Failed,
+    /// The remote returned a non-2xx status.
     Rejected(CalloutResponse),
 }
 
 /// Response from a metering callout.
 struct CalloutResponse {
+    /// HTTP status code.
     status: u16,
+    /// Response body bytes.
     body: Bytes,
 }
 
 /// Request for a metering callout.
 struct CalloutRequest {
+    /// HTTP method.
     method: http::Method,
+    /// Target URL.
     url: String,
+    /// Request headers.
     headers: Vec<(HeaderName, http::HeaderValue)>,
+    /// Optional request body.
     body: Option<Vec<u8>>,
 }
 
 impl MeteringClient {
+    /// Build a client with the given request timeout.
     fn new(timeout_ms: u64) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(timeout_ms))
@@ -84,6 +95,7 @@ impl MeteringClient {
         Ok(Self { client })
     }
 
+    /// Send a request and classify the result.
     async fn execute(&self, request: CalloutRequest) -> CalloutResult {
         let mut builder = self.client.request(request.method, &request.url);
         for (name, value) in request.headers {
@@ -240,10 +252,9 @@ impl ExternalMeteringFilter {
         validate_config(&cfg)?;
 
         let callout_client = Arc::new(
-            MeteringClient::new(u64::from(cfg.timeout_seconds).saturating_mul(MILLIS_PER_SECOND))
-                .map_err(|e| -> FilterError {
-                    format!("external_metering: failed to create callout client: {e}").into()
-                })?,
+            MeteringClient::new(cfg.timeout_seconds.saturating_mul(MILLIS_PER_SECOND)).map_err(|e| -> FilterError {
+                format!("external_metering: failed to create callout client: {e}").into()
+            })?,
         );
 
         Ok(Self {
@@ -565,17 +576,20 @@ struct Identity {
     username: String,
 }
 
-/// Read identity from filter_metadata first (trusted, set by
-/// jwt_auth or similar), then fall back to request headers (set
+/// Read identity from `filter_metadata` first (trusted, set by
+/// `jwt_auth` or similar), then fall back to request headers (set
 /// by an upstream auth layer like Authorino). Metadata takes
 /// precedence so a client cannot spoof identity by sending
 /// forged headers alongside a valid JWT.
+#[expect(
+    clippy::too_many_lines,
+    reason = "three-tier identity resolution with fallback chain"
+)]
 fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Identity {
     let prefix_lower = prefix.to_ascii_lowercase();
     let mut identity = Identity::default();
 
-    // 1. Verified path: unnamespaced metadata (set by jwt_auth
-    //    from verified JWT claims). Highest trust.
+    // 1. Verified path: unnamespaced metadata (set by jwt_auth from verified JWT claims). Highest trust.
     if let Some(val) = ctx.filter_metadata.get(&format!("{prefix_lower}username")) {
         identity.username.clone_from(val);
     }
@@ -595,9 +609,8 @@ fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Ident
     // a valid JWT that only maps username/group.
     let has_verified_identity = !identity.username.is_empty();
 
-    // 2. Namespaced path: identity.{prefix}* (set by
-    //    identity_header_guard from captured request headers).
-    //    Only used when jwt_auth is not in the pipeline.
+    // 2. Namespaced path: identity.{prefix}* (set by identity_header_guard from captured request headers). Only used
+    //    when jwt_auth is not in the pipeline.
     if !has_verified_identity {
         if let Some(val) = ctx.filter_metadata.get(&format!("identity.{prefix_lower}username")) {
             identity.username.clone_from(val);
@@ -613,8 +626,7 @@ fn read_identity_headers(ctx: &mut HttpFilterContext<'_>, prefix: &str) -> Ident
         }
     }
 
-    // 3. Raw header fallback (set by Authorino or similar).
-    //    Only used when NO metadata identity was found at all.
+    // 3. Raw header fallback (set by Authorino or similar). Only used when NO metadata identity was found at all.
     if !has_verified_identity && identity.username.is_empty() {
         for (key, value) in &ctx.request.headers {
             let key_lower = key.as_str().to_ascii_lowercase();

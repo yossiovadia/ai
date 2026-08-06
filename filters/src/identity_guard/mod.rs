@@ -17,17 +17,11 @@ mod config;
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests"
-)]
+#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, reason = "tests")]
 mod tests;
 
 use async_trait::async_trait;
-use praxis_filter::{
-    FilterAction, FilterError, HttpFilter, HttpFilterContext, parse_filter_config,
-};
+use praxis_filter::{FilterAction, FilterError, HttpFilter, HttpFilterContext, parse_filter_config};
 use tracing::trace;
 
 use self::config::{IdentityHeaderGuardConfig, validate_config};
@@ -58,10 +52,7 @@ use self::config::{IdentityHeaderGuardConfig, validate_config};
 /// ```rust
 /// use praxis_ai_filters::IdentityHeaderGuardFilter;
 ///
-/// let yaml: serde_yaml::Value = serde_yaml::from_str(
-///     r#"prefix: "x-tenant-""#,
-/// )
-/// .unwrap();
+/// let yaml: serde_yaml::Value = serde_yaml::from_str(r#"prefix: "x-tenant-""#).unwrap();
 /// let filter = IdentityHeaderGuardFilter::from_config(&yaml).unwrap();
 /// assert_eq!(filter.name(), "identity_header_guard");
 /// ```
@@ -79,11 +70,8 @@ impl IdentityHeaderGuardFilter {
     /// # Errors
     ///
     /// Returns [`FilterError`] if config parsing or validation fails.
-    pub fn from_config(
-        value: &serde_yaml::Value,
-    ) -> Result<Box<dyn HttpFilter>, FilterError> {
-        let config: IdentityHeaderGuardConfig =
-            parse_filter_config("identity_header_guard", value)?;
+    pub fn from_config(value: &serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError> {
+        let config: IdentityHeaderGuardConfig = parse_filter_config("identity_header_guard", value)?;
         validate_config(&config).map_err(|e| -> FilterError { e.into() })?;
 
         Ok(Box::new(Self {
@@ -99,10 +87,7 @@ impl HttpFilter for IdentityHeaderGuardFilter {
         "identity_header_guard"
     }
 
-    async fn on_request(
-        &self,
-        ctx: &mut HttpFilterContext<'_>,
-    ) -> Result<FilterAction, FilterError> {
+    async fn on_request(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
         let mut captured = 0_usize;
 
         for (name, value) in &ctx.request.headers {

@@ -68,6 +68,7 @@ fn register_agentic_filters(registry: &mut FilterRegistry) {
 }
 
 /// Register general-purpose AI filters.
+#[expect(clippy::too_many_lines, reason = "exhaustive filter registration list")]
 fn register_general_ai_filters(registry: &mut FilterRegistry) {
     praxis_filter::register_filters!(
         @register registry,

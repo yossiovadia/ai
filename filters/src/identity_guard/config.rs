@@ -28,6 +28,7 @@ pub(super) struct IdentityHeaderGuardConfig {
     pub metadata_namespace: String,
 }
 
+/// Returns the default metadata namespace (`identity`).
 fn default_namespace() -> String {
     "identity".to_owned()
 }
@@ -36,6 +37,7 @@ fn default_namespace() -> String {
 // Validation
 // -----------------------------------------------------------------------------
 
+/// Validate an [`IdentityHeaderGuardConfig`], returning an error on missing required fields.
 pub(super) fn validate_config(config: &IdentityHeaderGuardConfig) -> Result<(), String> {
     if config.prefix.is_empty() {
         return Err("identity_header_guard: prefix must not be empty".into());
