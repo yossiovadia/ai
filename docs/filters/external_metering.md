@@ -5,6 +5,19 @@
 
 Integrates with an external metering service for pre-request balance checks and post-response token usage reporting.
 
+## Configuration
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `metering_url` | string | yes | Base URL of the external metering service (required). |
+| `timeout_seconds` | integer | no | HTTP timeout in seconds for all metering calls. |
+| `feature_key` | string | no | Entitlement feature key used in balance check URL path. |
+| `source` | string | no | `CloudEvents` `source` field value. |
+| `fail_open` | bool | no | When `true` (default), requests proceed if the metering service is unavailable. When `false`, requests are rejected with 503. |
+| `identity_header_prefix` | string | no | Prefix for tenant identity headers to capture and strip. Expected headers: `{prefix}username`, `{prefix}group`, `{prefix}subscription`, `{prefix}model`. |
+| `default_username` | string | no | Fallback username when no identity header is present. If set, requests without `{prefix}username` are still metered under this name. If unset, metering is skipped entirely. |
+| `default_model` | string | no | Fallback model name when no identity model header is present. |
+
 ## Example
 
 ```yaml
