@@ -227,8 +227,7 @@ impl HttpFilter for JwtAuthFilter {
                     other => other.to_string(),
                 };
 
-                ctx.filter_metadata
-                    .insert(header_name.clone(), header_value);
+                ctx.set_metadata(header_name.clone(), header_value);
             }
         }
 

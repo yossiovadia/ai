@@ -15,6 +15,7 @@ mod credential_injection;
 mod external_metering;
 mod full_flow;
 mod guardrails;
+mod identity_header_guard;
 mod mcp_broker;
 mod model_to_header;
 mod openai_conversations;

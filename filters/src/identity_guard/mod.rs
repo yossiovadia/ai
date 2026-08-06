@@ -119,8 +119,7 @@ impl HttpFilter for IdentityHeaderGuardFilter {
                 // launder client-spoofed headers into the trusted
                 // metadata namespace.
                 let namespaced = format!("{}.{}", self.namespace, name_lower);
-                ctx.filter_metadata
-                    .insert(namespaced, val.to_owned());
+                ctx.set_metadata(namespaced, val.to_owned());
                 captured += 1;
             }
 
