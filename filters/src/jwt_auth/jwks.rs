@@ -63,6 +63,10 @@ impl JwksCache {
     pub(super) fn new(url: String) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
+            // Accept self-signed certs for JWKS endpoints.
+            // In production, the IdP should have a valid cert
+            // and this should be removed or made configurable.
+            .danger_accept_invalid_certs(true)
             .build()
             .map_err(|e| format!("jwt_auth: failed to build HTTP client: {e}"))?;
 

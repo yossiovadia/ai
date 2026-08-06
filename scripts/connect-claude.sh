@@ -17,7 +17,7 @@
 set -euo pipefail
 
 GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:8180}"
-KEYCLOAK_URL="${KEYCLOAK_URL:-http://127.0.0.1:8280}"
+KEYCLOAK_URL="${KEYCLOAK_URL:-https://127.0.0.1:8280}"
 KC_REALM="${KC_REALM:-ai-gateway}"
 KC_CLIENT="${KC_CLIENT:-praxis-gateway}"
 
@@ -53,14 +53,14 @@ if ! curl -s -o /dev/null -w '%{http_code}' "$GATEWAY_URL/" 2>/dev/null | grep -
     exit 1
 fi
 
-if ! curl -sf -o /dev/null "$KEYCLOAK_URL/realms/$KC_REALM/.well-known/openid-configuration" 2>&1; then
+if ! curl -skf -o /dev/null "$KEYCLOAK_URL/realms/$KC_REALM/.well-known/openid-configuration" 2>&1; then
     echo "ERROR: Keycloak not reachable at $KEYCLOAK_URL"
     exit 1
 fi
 
 # ── Authenticate ──────────────────────────────────────────────────
 
-RESPONSE=$(curl -s "$KEYCLOAK_URL/realms/$KC_REALM/protocol/openid-connect/token" \
+RESPONSE=$(curl -sk "$KEYCLOAK_URL/realms/$KC_REALM/protocol/openid-connect/token" \
     -d "client_id=$KC_CLIENT" \
     -d "username=$USERNAME" \
     -d "password=$PASSWORD" \

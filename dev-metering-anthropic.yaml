@@ -29,8 +29,8 @@ filter_chains:
     filters:
       # 1. Validate JWT from Keycloak, inject identity headers.
       - filter: jwt_auth
-        jwks_url: "http://127.0.0.1:8280/realms/ai-gateway/protocol/openid-connect/certs"
-        issuer: "http://127.0.0.1:8280/realms/ai-gateway"
+        jwks_url: "https://127.0.0.1:8280/realms/ai-gateway/protocol/openid-connect/certs"
+        issuer: "https://127.0.0.1:8280/realms/ai-gateway"
         token_header: "x-api-key"
         claim_headers:
           preferred_username: "x-tenant-username"

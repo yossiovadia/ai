@@ -13,7 +13,7 @@
 set -euo pipefail
 
 GATEWAY_PORT="${GATEWAY_PORT:-8180}"
-KEYCLOAK_URL="${KEYCLOAK_URL:-http://127.0.0.1:8280}"
+KEYCLOAK_URL="${KEYCLOAK_URL:-https://127.0.0.1:8280}"
 METERING_URL="${METERING_URL:-http://127.0.0.1:9090}"
 CONFIG_FILE="dev-metering-anthropic.yaml"
 BINARY="./target/debug/praxis-ai"
@@ -35,7 +35,7 @@ if [[ ! -x "$BINARY" ]]; then
     exit 1
 fi
 
-if ! curl -sf -o /dev/null "$KEYCLOAK_URL/realms/ai-gateway/.well-known/openid-configuration" 2>&1; then
+if ! curl -skf -o /dev/null "$KEYCLOAK_URL/realms/ai-gateway/.well-known/openid-configuration" 2>&1; then
     echo "ERROR: Keycloak not reachable at $KEYCLOAK_URL"
     echo ""
     echo "  docker run -d --name keycloak -p 8280:8080 \\"
