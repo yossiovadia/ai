@@ -24,12 +24,56 @@ CLEANUP_ONLY=false
 USER_PREFIX="bench-user"
 USER_DOMAIN="test"
 
-for arg in "$@"; do
-    case "$arg" in
-        --users) shift; NUM_USERS="$1"; shift ;;
-        --turns) shift; NUM_TURNS="$1"; shift ;;
-        --concurrent) shift; CONCURRENT="$1"; shift ;;
-        --cleanup) CLEANUP_ONLY=true ;;
+show_help() {
+    cat <<'HELP'
+Usage: ./scripts/benchmark.sh [OPTIONS]
+
+Multi-user load test through the Praxis AI gateway pipeline.
+Creates test users, fires concurrent multi-turn conversations via
+llm-katan (echo backend, zero provider cost), and reports latency,
+throughput, resource usage, and proxy overhead.
+
+Options:
+  --users N        Number of test users to create (default: 20)
+  --turns N        Conversation turns per user (default: 10)
+  --concurrent N   Max parallel requests (default: 10)
+  --cleanup        Delete test users and metering data only (no benchmark)
+  --help           Show this help
+
+Examples:
+  ./scripts/benchmark.sh                              # 20 users, 10 turns
+  ./scripts/benchmark.sh --users 50 --turns 5         # 50 users, 5 turns
+  ./scripts/benchmark.sh --concurrent 30              # higher parallelism
+  ./scripts/benchmark.sh --users 5 --turns 2          # quick smoke test
+  ./scripts/benchmark.sh --cleanup                    # wipe test data
+
+Pipeline under test:
+  api_key_auth → identity_header_guard → router → external_metering
+  → token_count → token_usage_headers → headers → load_balancer
+
+Output includes:
+  - Latency percentiles (p50/p95/p99)
+  - Throughput (req/s)
+  - Error breakdown by HTTP status
+  - Pod CPU/memory before and after
+  - Praxis proxy overhead (total latency minus backend TTFT)
+
+Prerequisites:
+  - oc login to the cluster
+  - Benchmark listener deployed (port 8082)
+  - llm-katan deployed on the cluster
+HELP
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --users) NUM_USERS="$2"; shift 2 ;;
+        --turns) NUM_TURNS="$2"; shift 2 ;;
+        --concurrent) CONCURRENT="$2"; shift 2 ;;
+        --cleanup) CLEANUP_ONLY=true; shift ;;
+        --help|-h) show_help ;;
+        *) echo "Unknown option: $1"; show_help ;;
     esac
 done
 
