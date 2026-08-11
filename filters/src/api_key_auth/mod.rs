@@ -216,7 +216,8 @@ impl HttpFilter for ApiKeyAuthFilter {
             debug!("no API key header found");
             return Ok(reject_unauthorized("missing API key"));
         };
-        let key = key_value.to_str().unwrap_or_default();
+        let raw = key_value.to_str().unwrap_or_default();
+        let key = raw.strip_prefix("Bearer ").unwrap_or(raw);
         if key.is_empty() {
             return Ok(reject_unauthorized("empty API key"));
         }
