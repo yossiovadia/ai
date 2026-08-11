@@ -1,0 +1,258 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: status-page
+  namespace: ai-gateway-dogfood
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Gateway Dogfood — Status</title>
+    <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--text2:#8b949e;
+      --green:#3fb950;--yellow:#d29922;--red:#f85149;--blue:#58a6ff;--purple:#bc8cff;--cyan:#39d2c0}
+    body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px;max-width:1200px;margin:0 auto}
+    h1{font-size:24px;font-weight:600;color:var(--blue);margin-bottom:4px}
+    .subtitle{color:var(--text2);font-size:14px;margin-bottom:24px}
+    h2{font-size:18px;font-weight:600;margin:28px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-bottom:8px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+    .card-title{font-weight:600;font-size:14px;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+    .card-body{font-size:13px;color:var(--text2);line-height:1.5}
+    .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;text-transform:uppercase}
+    .done{background:#23462e;color:var(--green)}
+    .open{background:#3d2e00;color:var(--yellow)}
+    .blocked{background:#3d1c1c;color:var(--red)}
+    .planned{background:#1c2d3d;color:var(--blue)}
+    .na{background:#21262d;color:var(--text2)}
+    .p0{border-left:3px solid var(--red)}
+    .p1{border-left:3px solid var(--yellow)}
+    .p2{border-left:3px solid var(--blue)}
+    .p3{border-left:3px solid var(--text2)}
+    a{color:var(--blue);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .links{display:flex;gap:16px;margin:16px 0;flex-wrap:wrap}
+    .links a{background:var(--card);border:1px solid var(--border);padding:8px 16px;border-radius:6px;font-size:13px}
+    .links a:hover{border-color:var(--blue);text-decoration:none}
+    .updated{color:var(--text2);font-size:12px;margin-top:32px;text-align:center}
+    table{width:100%;border-collapse:collapse;margin:8px 0}
+    th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px}
+    th{color:var(--text2);font-weight:500;font-size:12px;text-transform:uppercase}
+    td a{color:var(--blue)}
+    </style>
+    </head>
+    <body>
+
+    <h1>AI Gateway Dogfood</h1>
+    <p class="subtitle">Praxis-based multi-provider AI gateway with per-user metering — CTO Dashboard Initiative</p>
+
+    <div class="links">
+      <a href="https://dashboard-ai-gateway-dogfood.dogfood-us-south-1-bxf-4x-f196230f74f7ff44a5b4eeb1003c5bd5-0000.us-south.containers.appdomain.cloud/dashboard" target="_blank">Metering Dashboard</a>
+      <a href="https://github.com/praxis-proxy/ai" target="_blank">praxis-proxy/ai</a>
+      <a href="https://github.com/yossiovadia/ai/tree/feat/dogfood-gateway" target="_blank">Dogfood Branch</a>
+    </div>
+
+    <!-- ============================================================ -->
+    <h2>Deployed Components</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="card-title"><span class="badge done">Live</span> Praxis Proxy</div>
+        <div class="card-body">Dual listener: Anthropic (:8080) + OpenAI (:8081). Auth, metering, credential injection, streaming.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="badge done">Live</span> maas-api</div>
+        <div class="card-body">API key management. Create, validate, revoke, search. PostgreSQL-backed with 90-day expiry.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="badge done">Live</span> Metering Service</div>
+        <div class="card-body">Per-user usage dashboard. 220 model prices seeded. CloudEvents ingestion. Token cost attribution.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="badge done">Live</span> PostgreSQL</div>
+        <div class="card-body">Shared database for maas-api (keys) and metering (events). 10Gi PVC. Auto-migration on startup.</div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <h2>Supported Clients</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="card-title"><span class="badge done">Tested</span> Claude Code</div>
+        <div class="card-body">Via connect-dogfood.sh. Overrides Vertex env vars. Streaming validated.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="badge done">Tested</span> Codex CLI</div>
+        <div class="card-body">Via dogfood provider in config.toml. Bearer auth, Responses API.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="badge done">Tested</span> curl / any HTTP client</div>
+        <div class="card-body">Standard Anthropic or OpenAI API format. x-api-key or Authorization: Bearer.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="badge planned">Untested</span> Python / Node SDKs</div>
+        <div class="card-body">Should work via OPENAI_BASE_URL / ANTHROPIC_BASE_URL. Not yet validated.</div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <h2>Upstream Issues &amp; PRs</h2>
+    <table>
+      <tr><th>#</th><th>Title</th><th>Type</th><th>Status</th></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/698">#698</a></td><td>identity header guard filter</td><td>Issue</td><td><span class="badge done">accepted</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/pull/709">#709</a></td><td>identity header guard filter</td><td>PR</td><td><span class="badge open">awaiting review</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/707">#707</a></td><td>API key validation filter</td><td>Issue</td><td><span class="badge open">needs triage</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/708">#708</a></td><td>JWT/OIDC authentication filter</td><td>Issue</td><td><span class="badge open">needs triage</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/712">#712</a></td><td>model access control (allowlist/denylist)</td><td>Issue</td><td><span class="badge open">needs triage</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/600">#600</a></td><td>llm-katan multi-provider test backend</td><td>Issue</td><td><span class="badge open">needs triage</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/pull/601">#601</a></td><td>Anthropic SDK integration tests</td><td>PR</td><td><span class="badge blocked">blocked</span></td></tr>
+    </table>
+
+    <!-- ============================================================ -->
+    <h2>Operational Gaps</h2>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:12px">
+      Transparent list of what's missing before this can be considered production-grade.
+      Priority: <span class="badge" style="background:#3d1c1c;color:var(--red)">P0</span> = blocking,
+      <span class="badge" style="background:#3d2e00;color:var(--yellow)">P1</span> = needed soon,
+      <span class="badge" style="background:#1c2d3d;color:var(--blue)">P2</span> = production,
+      <span class="badge" style="background:#21262d;color:var(--text2)">P3</span> = nice to have
+    </p>
+    <div class="grid">
+      <div class="card p1">
+        <div class="card-title"><span class="badge open">P1</span> Database Backup</div>
+        <div class="card-body">Zero backup strategy. Single PVC, no snapshots, no pg_dump cron. Data loss on PVC failure.</div>
+      </div>
+      <div class="card p1">
+        <div class="card-title"><span class="badge open">P1</span> Monitoring &amp; Alerting</div>
+        <div class="card-body">No Prometheus scraping. No alerts on pod crashes, high error rates, or disk pressure. Flying blind.</div>
+      </div>
+      <div class="card p1">
+        <div class="card-title"><span class="badge open">P1</span> maas-api Authentication</div>
+        <div class="card-body">Key management API accepts identity from raw headers. No Keycloak/OIDC. Anyone with the URL can create keys.</div>
+      </div>
+      <div class="card p1">
+        <div class="card-title"><span class="badge open">P1</span> Secret Rotation</div>
+        <div class="card-body">Provider API keys (Anthropic, OpenAI) are static secrets. No rotation mechanism. Manual update + restart.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> High Availability</div>
+        <div class="card-body">All components are single replica. Any pod restart = brief downtime. Need replicas + PDB.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> Managed Database</div>
+        <div class="card-body">PostgreSQL on a PVC is not production-grade. Should use IBM Cloud Databases or similar managed service.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> Rate Limiting</div>
+        <div class="card-body">No per-user or per-model rate limits. A single user can exhaust the provider quota. Tokenomics epic #656.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> Network Policies</div>
+        <div class="card-body">All pods can reach all pods. Should restrict: only Praxis talks to maas-api and metering, nothing else.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> In-cluster TLS</div>
+        <div class="card-body">Services communicate over plain HTTP inside the cluster. Edge TLS only. mTLS needed for zero-trust.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> Audit Logging</div>
+        <div class="card-body">No record of who created/revoked keys, who changed config. Need audit trail for compliance.</div>
+      </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> Model Access Control</div>
+        <div class="card-body">Any authenticated user can request any model. Need allowlist/denylist per tenant. Issue #712.</div>
+      </div>
+      <div class="card p3">
+        <div class="card-title"><span class="badge na">P3</span> Horizontal Autoscaling</div>
+        <div class="card-body">Fixed replica count. No HPA based on request volume or latency. Manual scaling only.</div>
+      </div>
+      <div class="card p3">
+        <div class="card-title"><span class="badge na">P3</span> Multi-region / DR</div>
+        <div class="card-body">Single cluster, single region (us-south). No failover. Full outage on cluster failure.</div>
+      </div>
+      <div class="card p3">
+        <div class="card-title"><span class="badge na">P3</span> CI/CD Pipeline</div>
+        <div class="card-body">Manual image builds via oc new-build. No automated deploy on git push. No staging environment.</div>
+      </div>
+      <div class="card p3">
+        <div class="card-title"><span class="badge na">P3</span> Performance Baseline</div>
+        <div class="card-body">No latency benchmarks. No comparison of proxy overhead vs direct provider calls. Issue #1.</div>
+      </div>
+      <div class="card p3">
+        <div class="card-title"><span class="badge na">P3</span> Routing Tab (Dashboard)</div>
+        <div class="card-body">Dashboard Routing tab shows empty state. Needs Praxis config adapter. Plan exists.</div>
+      </div>
+    </div>
+
+    <p class="updated">Last updated: 2026-08-11 &mdash; IBM Cloud OpenShift 4.21, us-south-1</p>
+
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: status-page
+  namespace: ai-gateway-dogfood
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: status-page
+  template:
+    metadata:
+      labels:
+        app: status-page
+    spec:
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: html
+          configMap:
+            name: status-page
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: status-page
+  namespace: ai-gateway-dogfood
+spec:
+  selector:
+    app: status-page
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: status
+  namespace: ai-gateway-dogfood
+  labels:
+    app: status-page
+spec:
+  to:
+    kind: Service
+    name: status-page
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
