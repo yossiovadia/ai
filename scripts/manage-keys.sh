@@ -26,7 +26,8 @@ Usage: ./scripts/manage-keys.sh <command> [options]
 Commands:
   create <email> [group]              Create an API key for a user
   list [email]                        List active keys (all or for one user)
-  revoke <email>                      Revoke all keys for a user
+  revoke <email>                      Disable a user's keys (keeps history)
+  delete <email>                      Permanently remove user and usage data
 
 Options:
   --help, -h    Show this help
@@ -37,6 +38,7 @@ Examples:
   ./scripts/manage-keys.sh list
   ./scripts/manage-keys.sh list noyitz@redhat.com
   ./scripts/manage-keys.sh revoke noyitz@redhat.com
+  ./scripts/manage-keys.sh delete test-user@redhat.com
 
 Group defaults to "ai-eng" if omitted.
 HELP
@@ -194,9 +196,73 @@ for k in data.get('data', []):
     echo "Revoked $COUNT key(s) for $USERNAME"
     ;;
 
+delete)
+    if [[ -z "${1:-}" ]]; then
+        echo "Usage: $0 delete <email>"
+        exit 1
+    fi
+    USERNAME="$1"
+
+    # Count what will be deleted
+    KEY_COUNT=$(curl -s -X POST "http://localhost:18080/v1/api-keys/search" \
+        -H "Content-Type: application/json" \
+        -H "X-MaaS-Username: $USERNAME" \
+        -H "X-MaaS-Group: $ADMIN_GROUP" \
+        -d "{}" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('data',[])))" 2>/dev/null)
+
+    EVENT_COUNT=$(oc -n "$NAMESPACE" exec postgresql-0 -- psql -U aigateway -d aigateway -t -q \
+        -c "SELECT COUNT(*) FROM usage_events WHERE username = '$USERNAME';" 2>/dev/null | tr -d ' ')
+
+    echo ""
+    echo "WARNING: This will permanently delete all data for $USERNAME:"
+    echo ""
+    echo "  - $KEY_COUNT API key(s) (active and revoked)"
+    echo "  - $EVENT_COUNT metering event(s)"
+    echo ""
+    echo "  This cannot be undone. If you just want to disable access,"
+    echo "  use 'revoke' instead — it keeps the history."
+    echo ""
+    read -p "  Type 'yes' to confirm: " CONFIRM
+
+    if [[ "$CONFIRM" != "yes" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    # Revoke all active keys first
+    KEYS=$(curl -s -X POST "http://localhost:18080/v1/api-keys/search" \
+        -H "Content-Type: application/json" \
+        -H "X-MaaS-Username: $USERNAME" \
+        -H "X-MaaS-Group: $ADMIN_GROUP" \
+        -d "{}" | python3 -c "
+import sys, json
+for k in json.load(sys.stdin).get('data', []):
+    if k['status'] == 'active':
+        print(k['id'])
+" 2>/dev/null)
+
+    while read -r ID; do
+        [[ -z "$ID" ]] && continue
+        curl -s -X DELETE "http://localhost:18080/v1/api-keys/$ID" \
+            -H "Content-Type: application/json" \
+            -H "X-MaaS-Username: $USERNAME" \
+            -H "X-MaaS-Group: $ADMIN_GROUP" > /dev/null
+    done <<< "$KEYS"
+
+    # Delete metering events
+    oc -n "$NAMESPACE" exec postgresql-0 -- psql -U aigateway -d aigateway -q \
+        -c "DELETE FROM usage_events WHERE username = '$USERNAME';" 2>/dev/null
+
+    # Delete key records (active + revoked)
+    oc -n "$NAMESPACE" exec postgresql-0 -- psql -U aigateway -d aigateway -q \
+        -c "DELETE FROM api_keys WHERE username = '$USERNAME';" 2>/dev/null
+
+    echo "Deleted all data for $USERNAME"
+    ;;
+
 *)
     echo "Unknown action: $ACTION"
-    echo "Usage: $0 <create|list|revoke> ..."
+    echo "Usage: $0 <create|list|revoke|delete> ..."
     exit 1
     ;;
 esac
