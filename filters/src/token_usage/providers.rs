@@ -49,19 +49,66 @@ struct OpenAiPromptTokensDetails {
 
 /// Parses `OpenAI`/Azure response format.
 ///
+/// Supports both Chat Completions format (`usage.prompt_tokens`) and
+/// Responses API format (`response.usage.input_tokens`). The Responses
+/// API nests usage under a `response` wrapper and uses Anthropic-style
+/// field names.
+///
 /// `prompt_tokens` already includes any cached tokens, so the cache read count
 /// is recorded as a breakdown of the input rather than added to it.
 pub(super) fn parse_openai(body: &[u8]) -> Option<TokenUsage> {
-    let response: OpenAiResponse = serde_json::from_slice(body).ok()?;
-    let usage = response.usage?;
-    let cache_read = usage
-        .prompt_tokens_details
-        .and_then(|details| details.cached_tokens)
-        .unwrap_or(0);
-    Some(
-        TokenUsage::new(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens)
-            .with_cache(cache_read, NO_CACHE_WRITE),
-    )
+    // Try Chat Completions format first (top-level usage).
+    if let Ok(response) = serde_json::from_slice::<OpenAiResponse>(body)
+        && let Some(usage) = response.usage
+    {
+        let cache_read = usage
+            .prompt_tokens_details
+            .and_then(|details| details.cached_tokens)
+            .unwrap_or(0);
+        return Some(
+            TokenUsage::new(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens)
+                .with_cache(cache_read, NO_CACHE_WRITE),
+        );
+    }
+
+    // Try Responses API format (usage nested under response wrapper).
+    if let Ok(wrapper) = serde_json::from_slice::<ResponsesApiEvent>(body)
+        && let Some(response) = wrapper.response
+        && let Some(usage) = response.usage
+    {
+        return Some(TokenUsage::new(
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+        ));
+    }
+
+    None
+}
+
+/// Wrapper for OpenAI Responses API `response.completed` SSE events.
+#[derive(Deserialize)]
+struct ResponsesApiEvent {
+    /// The nested response object containing usage.
+    response: Option<ResponsesApiResponse>,
+}
+
+/// Inner response object in Responses API events.
+#[derive(Deserialize)]
+struct ResponsesApiResponse {
+    /// Token usage (uses input_tokens/output_tokens, not prompt_tokens).
+    usage: Option<ResponsesApiUsage>,
+}
+
+/// Responses API usage format.
+#[derive(Deserialize)]
+struct ResponsesApiUsage {
+    /// Input tokens.
+    input_tokens: u64,
+    /// Output tokens.
+    output_tokens: u64,
+    /// Total tokens.
+    total_tokens: Option<u64>,
 }
 
 // -----------------------------------------------------------------------------
@@ -240,6 +287,31 @@ mod tests {
         assert_eq!(usage.input_tokens(), 10);
         assert_eq!(usage.output_tokens(), 20);
         assert_eq!(usage.total_tokens(), 30, "total should be computed as input + output");
+    }
+
+    #[test]
+    fn openai_responses_api_format() {
+        let json = br#"{"type":"response.completed","response":{"id":"resp_123","usage":{"input_tokens":150,"output_tokens":42,"total_tokens":192}}}"#;
+        let usage = parse_openai(json).unwrap();
+        assert_eq!(usage.input_tokens(), 150, "should parse input_tokens from Responses API");
+        assert_eq!(usage.output_tokens(), 42);
+        assert_eq!(usage.total_tokens(), 192);
+    }
+
+    #[test]
+    fn openai_responses_api_without_total() {
+        let json = br#"{"response":{"usage":{"input_tokens":10,"output_tokens":20}}}"#;
+        let usage = parse_openai(json).unwrap();
+        assert_eq!(usage.input_tokens(), 10);
+        assert_eq!(usage.output_tokens(), 20);
+        assert_eq!(usage.total_tokens(), 30, "should compute total when absent");
+    }
+
+    #[test]
+    fn openai_responses_api_no_usage_returns_none() {
+        let json = br#"{"type":"response.output_item.added","response":null}"#;
+        // response is null, no usage
+        assert!(parse_openai(json).is_none());
     }
 
     #[test]
