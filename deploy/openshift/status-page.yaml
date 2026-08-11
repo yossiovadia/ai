@@ -123,6 +123,10 @@ data:
     </p>
     <div class="grid">
       <div class="card p1">
+        <div class="card-title"><span class="badge open">P1</span> OpenAI Streaming Token Counting</div>
+        <div class="card-body">Token counting works for Anthropic streaming but not OpenAI Responses API streaming (Codex shows 0 tokens). Needs stream_options injection + OpenAI SSE usage parser. IPP had this — port required.</div>
+      </div>
+      <div class="card p1">
         <div class="card-title"><span class="badge open">P1</span> Database Backup</div>
         <div class="card-body">Zero backup strategy. Single PVC, no snapshots, no pg_dump cron. Data loss on PVC failure.</div>
       </div>
@@ -166,6 +170,10 @@ data:
         <div class="card-title"><span class="badge planned">P2</span> Model Access Control</div>
         <div class="card-body">Any authenticated user can request any model. Need allowlist/denylist per tenant. Issue #712.</div>
       </div>
+      <div class="card p2">
+        <div class="card-title"><span class="badge planned">P2</span> Per-Org Provider Keys</div>
+        <div class="card-body">Currently one shared provider key per backend (many users → one Anthropic key). Need per-org/group key mapping so each team's usage is billed separately. Phase 2 per Josh Boyer.</div>
+      </div>
       <div class="card p3">
         <div class="card-title"><span class="badge na">P3</span> Horizontal Autoscaling</div>
         <div class="card-body">Fixed replica count. No HPA based on request volume or latency. Manual scaling only.</div>
@@ -179,8 +187,8 @@ data:
         <div class="card-body">Manual image builds via oc new-build. No automated deploy on git push. No staging environment.</div>
       </div>
       <div class="card p3">
-        <div class="card-title"><span class="badge na">P3</span> Performance Baseline</div>
-        <div class="card-body">No latency benchmarks. No comparison of proxy overhead vs direct provider calls. Issue #1.</div>
+        <div class="card-title"><span class="badge done">Done</span> Performance Baseline</div>
+        <div class="card-body">Benchmarked: 5ms proxy overhead, 76Mi memory, 50 concurrent users. Posted to praxis-proxy Discussion #955.</div>
       </div>
       <div class="card p3">
         <div class="card-title"><span class="badge na">P3</span> Routing Tab (Dashboard)</div>
