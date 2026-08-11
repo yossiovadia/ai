@@ -6,6 +6,8 @@ metadata:
   namespace: ai-gateway-dogfood
   labels:
     app: praxis
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
 spec:
   to:
     kind: Service
@@ -22,6 +24,8 @@ metadata:
   namespace: ai-gateway-dogfood
   labels:
     app: praxis
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
 spec:
   to:
     kind: Service

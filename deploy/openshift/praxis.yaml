@@ -80,7 +80,7 @@ data:
         filters:
           - filter: api_key_auth
             validate_url: "http://maas-api:8080/internal/v1/api-keys/validate"
-            token_header: "x-api-key"
+            token_header: "authorization"
             cache_ttl_seconds: 300
             timeout_seconds: 5
 
@@ -127,15 +127,9 @@ data:
                 endpoints:
                   - "api.openai.com:443"
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: provider-credentials
-  namespace: ai-gateway-dogfood
-type: Opaque
-stringData:
-  ANTHROPIC_API_KEY: CHANGE-ME-BEFORE-DEPLOY
-  OPENAI_API_KEY: CHANGE-ME-BEFORE-DEPLOY
+# NOTE: provider-credentials Secret is created by deploy.sh from
+# env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY). Do NOT include it
+# in this manifest — oc apply would overwrite real keys with placeholders.
 ---
 apiVersion: apps/v1
 kind: Deployment
