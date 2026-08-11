@@ -131,7 +131,7 @@ for k in data.get('data', []):
     # Delete metering events for benchmark users
     echo "Deleting metering events for benchmark users..."
     oc -n "$NAMESPACE" exec postgresql-0 -- psql -U aigateway -d aigateway -q \
-        -c "DELETE FROM events WHERE user_id LIKE '${USER_PREFIX}-%@${USER_DOMAIN}';" 2>/dev/null || true
+        -c "DELETE FROM usage_events WHERE username LIKE '${USER_PREFIX}-%@${USER_DOMAIN}';" 2>/dev/null || true
 
     echo "Cleanup complete."
 }
