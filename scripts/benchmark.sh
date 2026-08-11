@@ -154,6 +154,17 @@ build_messages() {
 
 # ── Run benchmark ────────────────────────────────────────────
 
+echo "Capturing baseline resource usage..."
+oc -n "$NAMESPACE" adm top pods 2>/dev/null | tee "$TMPDIR/resources_before.txt" || true
+
+# Capture Praxis metrics before
+oc -n "$NAMESPACE" port-forward svc/praxis 19901:9901 > /dev/null 2>&1 &
+METRICS_PF=$!
+sleep 1
+curl -s http://localhost:19901/metrics > "$TMPDIR/metrics_before.txt" 2>/dev/null
+kill $METRICS_PF 2>/dev/null
+
+echo ""
 echo "Running benchmark..."
 echo ""
 
@@ -202,6 +213,17 @@ END_TIME=$(python3 -c "import time; print(int(time.time()*1000))")
 DURATION_MS=$(( END_TIME - START_TIME ))
 
 # ── Collect results ──────────────────────────────────────────
+
+echo ""
+echo "Capturing post-benchmark resource usage..."
+oc -n "$NAMESPACE" adm top pods 2>/dev/null | tee "$TMPDIR/resources_after.txt" || true
+
+# Capture Praxis metrics after
+oc -n "$NAMESPACE" port-forward svc/praxis 19901:9901 > /dev/null 2>&1 &
+METRICS_PF=$!
+sleep 1
+curl -s http://localhost:19901/metrics > "$TMPDIR/metrics_after.txt" 2>/dev/null
+kill $METRICS_PF 2>/dev/null
 
 echo ""
 echo "Collecting results..."
@@ -276,8 +298,80 @@ if failures > 0:
     for code, count in sorted(errors_by_code.items()):
         print('    HTTP {}: {}'.format(code, count))
 print()
-print('  Dashboard: check metering for per-user breakdown')
-print('  Cleanup:   ./scripts/benchmark.sh --cleanup')
-print()
 print('==========================================')
 "
+
+# ── Resource usage ───────────────────────────────────────────
+
+echo "  Resource Usage (during benchmark):"
+echo ""
+if [[ -f "$TMPDIR/resources_after.txt" ]]; then
+    while read -r line; do
+        echo "    $line"
+    done < "$TMPDIR/resources_after.txt"
+fi
+echo ""
+
+# ── Praxis proxy overhead ────────────────────────────────────
+
+python3 -c "
+import os
+
+before = '$TMPDIR/metrics_before.txt'
+after = '$TMPDIR/metrics_after.txt'
+
+def parse_counter(path, name):
+    total = 0
+    if not os.path.exists(path):
+        return 0
+    with open(path) as f:
+        for line in f:
+            if line.startswith(name + '{') or line.startswith(name + ' '):
+                parts = line.rsplit(' ', 1)
+                if len(parts) == 2:
+                    try:
+                        total += float(parts[1])
+                    except ValueError:
+                        pass
+    return total
+
+def parse_sum(path, metric):
+    if not os.path.exists(path):
+        return 0
+    with open(path) as f:
+        for line in f:
+            if line.startswith(metric):
+                parts = line.rsplit(' ', 1)
+                if len(parts) == 2:
+                    try:
+                        return float(parts[1])
+                    except ValueError:
+                        pass
+    return 0
+
+req_before = parse_counter(before, 'praxis_http_requests_total')
+req_after = parse_counter(after, 'praxis_http_requests_total')
+dur_before = parse_sum(before, 'praxis_http_request_duration_seconds_sum')
+dur_after = parse_sum(after, 'praxis_http_request_duration_seconds_sum')
+
+bench_reqs = req_after - req_before
+bench_dur = dur_after - dur_before
+
+if bench_reqs > 0:
+    avg_total = (bench_dur / bench_reqs) * 1000
+    # llm-katan TTFT is ~800ms, so proxy overhead ≈ total - 800
+    proxy_overhead = max(0, avg_total - 800)
+    print('  Praxis Metrics (from Prometheus):')
+    print('    Requests processed:  {:.0f}'.format(bench_reqs))
+    print('    Avg total latency:   {:.0f}ms (includes 800ms llm-katan TTFT)'.format(avg_total))
+    print('    Proxy overhead:      ~{:.0f}ms (total - TTFT)'.format(proxy_overhead))
+    print()
+else:
+    print('  Praxis metrics: no delta detected')
+    print()
+" 2>/dev/null
+
+echo "  Dashboard: check metering for per-user breakdown"
+echo "  Cleanup:   ./scripts/benchmark.sh --cleanup"
+echo ""
+echo "=========================================="
