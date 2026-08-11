@@ -28,6 +28,12 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
     exit 1
 fi
 
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    echo "ERROR: OPENAI_API_KEY not set."
+    echo "  export OPENAI_API_KEY=\"sk-...\""
+    exit 1
+fi
+
 echo "Deploying to: $(oc whoami --show-server)"
 echo "Namespace:    $NAMESPACE"
 echo ""
@@ -50,8 +56,9 @@ oc -n "$NAMESPACE" create secret generic postgresql-credentials \
     --from-literal=METERING_DB_URL="postgresql://aigateway:${PG_PASSWORD}@postgresql:5432/aigateway?sslmode=disable" \
     --dry-run=client -o yaml | oc apply -f -
 
-oc -n "$NAMESPACE" create secret generic anthropic-credentials \
+oc -n "$NAMESPACE" create secret generic provider-credentials \
     --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
     --dry-run=client -o yaml | oc apply -f -
 
 # ── Deploy PostgreSQL ─────────────────────────────────────────
@@ -59,6 +66,12 @@ oc -n "$NAMESPACE" create secret generic anthropic-credentials \
 echo "Deploying PostgreSQL..."
 oc apply -f "$SCRIPT_DIR/postgresql.yaml"
 oc -n "$NAMESPACE" rollout status statefulset/postgresql --timeout=120s
+
+# ── Deploy maas-api ───────────────────────────────────────────
+
+echo "Deploying maas-api..."
+oc apply -f "$SCRIPT_DIR/maas-api.yaml"
+oc -n "$NAMESPACE" rollout status deployment/maas-api --timeout=120s
 
 # ── Deploy metering service ───────────────────────────────────
 
@@ -79,7 +92,8 @@ oc apply -f "$SCRIPT_DIR/routes.yaml"
 
 # ── Print connection info ─────────────────────────────────────
 
-GATEWAY_URL=$(oc -n "$NAMESPACE" get route ai-gateway -o jsonpath='{.spec.host}')
+ANTHROPIC_ROUTE=$(oc -n "$NAMESPACE" get route ai-gateway-anthropic -o jsonpath='{.spec.host}')
+OPENAI_ROUTE=$(oc -n "$NAMESPACE" get route ai-gateway-openai -o jsonpath='{.spec.host}')
 DASHBOARD_URL=$(oc -n "$NAMESPACE" get route dashboard -o jsonpath='{.spec.host}')
 
 echo ""
@@ -87,11 +101,15 @@ echo "=========================================="
 echo "  AI Gateway Dogfood — Deployed"
 echo "=========================================="
 echo ""
-echo "  Gateway:   https://$GATEWAY_URL"
+echo "  Anthropic: https://$ANTHROPIC_ROUTE"
+echo "  OpenAI:    https://$OPENAI_ROUTE"
 echo "  Dashboard: https://$DASHBOARD_URL/dashboard"
 echo ""
 echo "  Connect Claude Code:"
-echo "    ANTHROPIC_BASE_URL=https://$GATEWAY_URL claude"
+echo "    ANTHROPIC_BASE_URL=https://$ANTHROPIC_ROUTE claude"
+echo ""
+echo "  Connect OpenAI SDK:"
+echo "    OPENAI_BASE_URL=https://$OPENAI_ROUTE/v1 python your-script.py"
 echo ""
 echo "  Pods:"
 oc -n "$NAMESPACE" get pods

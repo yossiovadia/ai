@@ -6,14 +6,25 @@ metadata:
   namespace: ai-gateway-dogfood
 data:
   praxis.yaml: |
+    admin:
+      address: "0.0.0.0:9901"
+
+    insecure_options:
+      allow_public_admin: true
+
     listeners:
-      - name: gateway
+      - name: anthropic
         address: "0.0.0.0:8080"
         filter_chains:
-          - main
+          - anthropic
+
+      - name: openai
+        address: "0.0.0.0:8081"
+        filter_chains:
+          - openai
 
     filter_chains:
-      - name: main
+      - name: anthropic
         filters:
           - filter: api_key_auth
             validate_url: "http://maas-api:8080/internal/v1/api-keys/validate"
@@ -64,15 +75,67 @@ data:
                   sni: "api.anthropic.com"
                 endpoints:
                   - "api.anthropic.com:443"
+
+      - name: openai
+        filters:
+          - filter: api_key_auth
+            validate_url: "http://maas-api:8080/internal/v1/api-keys/validate"
+            token_header: "x-api-key"
+            cache_ttl_seconds: 300
+            timeout_seconds: 5
+
+          - filter: identity_header_guard
+            prefix: "x-tenant-"
+
+          - filter: router
+            routes:
+              - path_prefix: "/"
+                cluster: openai
+
+          - filter: external_metering
+            metering_url: "http://metering-service:8080"
+            timeout_seconds: 5
+            feature_key: "inference-tokens"
+            source: "praxis-ai"
+            fail_open: true
+            identity_header_prefix: "x-tenant-"
+            default_model: "unknown"
+
+          - filter: token_count
+            provider: openai
+
+          - filter: token_usage_headers
+
+          - filter: credential_injection
+            clusters:
+              - name: openai
+                header: Authorization
+                env_var: OPENAI_API_KEY
+                header_prefix: "Bearer "
+                strip_client_credential: true
+
+          - filter: headers
+            request_set:
+              - name: "Host"
+                value: "api.openai.com"
+
+          - filter: load_balancer
+            clusters:
+              - name: openai
+                tls:
+                  sni: "api.openai.com"
+                endpoints:
+                  - "api.openai.com:443"
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: anthropic-credentials
+  name: provider-credentials
   namespace: ai-gateway-dogfood
 type: Opaque
 stringData:
   ANTHROPIC_API_KEY: CHANGE-ME-BEFORE-DEPLOY
+  OPENAI_API_KEY: CHANGE-ME-BEFORE-DEPLOY
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -91,19 +154,26 @@ spec:
     spec:
       containers:
         - name: praxis
-          image: quay.io/yossiovadia/praxis-ai:dogfood
+          image: image-registry.openshift-image-registry.svc:5000/ai-gateway-dogfood/praxis-ai:latest
           args: ["-c", "/etc/praxis/praxis.yaml"]
           ports:
             - containerPort: 8080
-              name: http
+              name: anthropic
+            - containerPort: 8081
+              name: openai
             - containerPort: 9901
               name: admin
           env:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: anthropic-credentials
+                  name: provider-credentials
                   key: ANTHROPIC_API_KEY
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: provider-credentials
+                  key: OPENAI_API_KEY
           volumeMounts:
             - name: config
               mountPath: /etc/praxis
@@ -135,9 +205,12 @@ spec:
   selector:
     app: praxis
   ports:
-    - name: http
+    - name: anthropic
       port: 8080
       targetPort: 8080
+    - name: openai
+      port: 8081
+      targetPort: 8081
     - name: admin
       port: 9901
       targetPort: 9901

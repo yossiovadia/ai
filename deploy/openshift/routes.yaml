@@ -2,7 +2,7 @@
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: ai-gateway
+  name: ai-gateway-anthropic
   namespace: ai-gateway-dogfood
   labels:
     app: praxis
@@ -11,7 +11,23 @@ spec:
     kind: Service
     name: praxis
   port:
-    targetPort: http
+    targetPort: anthropic
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ai-gateway-openai
+  namespace: ai-gateway-dogfood
+  labels:
+    app: praxis
+spec:
+  to:
+    kind: Service
+    name: praxis
+  port:
+    targetPort: openai
   tls:
     termination: edge
 ---

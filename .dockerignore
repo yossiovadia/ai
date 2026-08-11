@@ -1,0 +1,12 @@
+target/
+.git/
+.github/
+.claude/
+docs/
+tests/
+examples/
+deploy/
+scripts/
+xtask/
+*.md
+LICENSE
