@@ -23,6 +23,11 @@ data:
         filter_chains:
           - openai
 
+      - name: benchmark
+        address: "0.0.0.0:8082"
+        filter_chains:
+          - benchmark
+
     filter_chains:
       - name: anthropic
         filters:
@@ -126,6 +131,49 @@ data:
                   sni: "api.openai.com"
                 endpoints:
                   - "api.openai.com:443"
+
+      - name: benchmark
+        filters:
+          - filter: api_key_auth
+            validate_url: "http://maas-api:8080/internal/v1/api-keys/validate"
+            token_header: "x-api-key"
+            cache_ttl_seconds: 300
+            timeout_seconds: 5
+
+          - filter: identity_header_guard
+            prefix: "x-tenant-"
+
+          - filter: router
+            routes:
+              - path_prefix: "/"
+                cluster: llm-katan
+
+          - filter: external_metering
+            metering_url: "http://metering-service:8080"
+            timeout_seconds: 5
+            feature_key: "inference-tokens"
+            source: "praxis-ai-benchmark"
+            fail_open: true
+            identity_header_prefix: "x-tenant-"
+            default_model: "unknown"
+
+          - filter: token_count
+            provider: anthropic
+
+          - filter: token_usage_headers
+
+          - filter: headers
+            request_set:
+              - name: "x-api-key"
+                value: "llm-katan-anthropic-key"
+              - name: "anthropic-version"
+                value: "2023-06-01"
+
+          - filter: load_balancer
+            clusters:
+              - name: llm-katan
+                endpoints:
+                  - "llm-katan:8000"
 ---
 # NOTE: provider-credentials Secret is created by deploy.sh from
 # env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY). Do NOT include it
@@ -155,6 +203,8 @@ spec:
               name: anthropic
             - containerPort: 8081
               name: openai
+            - containerPort: 8082
+              name: benchmark
             - containerPort: 9901
               name: admin
           env:
@@ -205,6 +255,9 @@ spec:
     - name: openai
       port: 8081
       targetPort: 8081
+    - name: benchmark
+      port: 8082
+      targetPort: 8082
     - name: admin
       port: 9901
       targetPort: 9901
