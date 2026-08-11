@@ -24,22 +24,20 @@ show_help() {
 Usage: ./scripts/manage-keys.sh <command> [options]
 
 Commands:
-  create <email> [key-name] [group]   Create an API key for a user
+  create <email> [group]              Create an API key for a user
   list [email]                        List active keys (all or for one user)
-  revoke <email> [key-name]           Revoke keys (all, or specific by name)
+  revoke <email>                      Revoke all keys for a user
 
 Options:
   --help, -h    Show this help
 
 Examples:
   ./scripts/manage-keys.sh create noyitz@redhat.com
-  ./scripts/manage-keys.sh create chris.wright@redhat.com cto-demo executive
+  ./scripts/manage-keys.sh create chris.wright@redhat.com executive
   ./scripts/manage-keys.sh list
   ./scripts/manage-keys.sh list noyitz@redhat.com
-  ./scripts/manage-keys.sh revoke noyitz@redhat.com dogfood-noyitz
-  ./scripts/manage-keys.sh revoke noyitz@redhat.com              # revokes all
+  ./scripts/manage-keys.sh revoke noyitz@redhat.com
 
-Key name defaults to "dogfood-<username>" if omitted.
 Group defaults to "ai-eng" if omitted.
 HELP
     exit 0
@@ -80,13 +78,13 @@ case "$ACTION" in
 
 create)
     if [[ -z "${1:-}" ]]; then
-        echo "Usage: $0 create <email> [key-name] [group]"
+        echo "Usage: $0 create <email> [group]"
         echo "  e.g.: $0 create noyitz@redhat.com"
         exit 1
     fi
     USERNAME="$1"
-    KEY_NAME="${2:-dogfood-${USERNAME%%@*}}"
-    GROUP="${3:-ai-eng}"
+    KEY_NAME="dogfood-${USERNAME%%@*}"
+    GROUP="${2:-ai-eng}"
 
     RESPONSE=$(api -X POST "http://localhost:18080/v1/api-keys" \
         -H "X-MaaS-Username: $USERNAME" \
@@ -162,7 +160,6 @@ revoke)
         exit 1
     fi
     USERNAME="$1"
-    KEY_NAME="${2:-}"
 
     # Search as the target user to see their keys
     RESPONSE=$(curl -s -X POST "http://localhost:18080/v1/api-keys/search" \
@@ -174,17 +171,14 @@ revoke)
     KEYS=$(echo "$RESPONSE" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-name_filter = '$KEY_NAME'
 for k in data.get('data', []):
     if k['status'] != 'active':
-        continue
-    if name_filter and k['name'] != name_filter:
         continue
     print(k['id'] + '|' + k['name'])
 " 2>/dev/null)
 
     if [[ -z "$KEYS" ]]; then
-        echo "No active keys found for $USERNAME${KEY_NAME:+ with name '$KEY_NAME'}"
+        echo "No active keys found for $USERNAME"
         exit 1
     fi
 
