@@ -1,0 +1,81 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-credentials
+  namespace: ai-gateway-dogfood
+type: Opaque
+stringData:
+  POSTGRES_USER: aigateway
+  POSTGRES_PASSWORD: CHANGE-ME-BEFORE-DEPLOY
+  POSTGRES_DB: aigateway
+  # Connection URLs for each service
+  MAAS_DB_URL: "postgresql://aigateway:CHANGE-ME-BEFORE-DEPLOY@postgresql:5432/aigateway?sslmode=disable"
+  METERING_DB_URL: "postgresql://aigateway:CHANGE-ME-BEFORE-DEPLOY@postgresql:5432/aigateway?sslmode=disable"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgresql-data
+  namespace: ai-gateway-dogfood
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: ai-gateway-dogfood
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: postgresql-credentials
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, aigateway]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgresql-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: ai-gateway-dogfood
+spec:
+  selector:
+    app: postgresql
+  ports:
+    - port: 5432
+      targetPort: 5432

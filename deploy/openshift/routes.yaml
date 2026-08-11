@@ -1,0 +1,32 @@
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ai-gateway
+  namespace: ai-gateway-dogfood
+  labels:
+    app: praxis
+spec:
+  to:
+    kind: Service
+    name: praxis
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: dashboard
+  namespace: ai-gateway-dogfood
+  labels:
+    app: metering-service
+spec:
+  to:
+    kind: Service
+    name: metering-service
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
