@@ -26,8 +26,7 @@ Usage: ./scripts/manage-keys.sh <command> [options]
 Commands:
   create <email> [key-name] [group]   Create an API key for a user
   list [email]                        List active keys (all or for one user)
-  revoke <email> [key-name]           Revoke specific key(s) for a user
-  revoke-user <email>                  Revoke all keys for a user
+  revoke <email> [key-name]           Revoke keys (all, or specific by name)
 
 Options:
   --help, -h    Show this help
@@ -38,7 +37,7 @@ Examples:
   ./scripts/manage-keys.sh list
   ./scripts/manage-keys.sh list noyitz@redhat.com
   ./scripts/manage-keys.sh revoke noyitz@redhat.com dogfood-noyitz
-  ./scripts/manage-keys.sh revoke-user test-user@redhat.com
+  ./scripts/manage-keys.sh revoke noyitz@redhat.com              # revokes all
 
 Key name defaults to "dogfood-<username>" if omitted.
 Group defaults to "ai-eng" if omitted.
@@ -201,45 +200,9 @@ for k in data.get('data', []):
     echo "Revoked $COUNT key(s) for $USERNAME"
     ;;
 
-revoke-user)
-    if [[ -z "${1:-}" ]]; then
-        echo "Usage: $0 revoke-user <email>"
-        exit 1
-    fi
-    USERNAME="$1"
-
-    RESPONSE=$(curl -s -X POST "http://localhost:18080/v1/api-keys/search" \
-        -H "Content-Type: application/json" \
-        -H "X-MaaS-Username: $USERNAME" \
-        -H "X-MaaS-Group: $ADMIN_GROUP" \
-        -d "{}")
-
-    IDS=$(echo "$RESPONSE" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-ids = [k['id'] for k in data.get('data', []) if k['status'] == 'active']
-print('\n'.join(ids))
-" 2>/dev/null)
-
-    if [[ -z "$IDS" ]]; then
-        echo "No active keys found for $USERNAME"
-        exit 1
-    fi
-
-    COUNT=0
-    while read -r ID; do
-        curl -s -X DELETE "http://localhost:18080/v1/api-keys/$ID" \
-            -H "Content-Type: application/json" \
-            -H "X-MaaS-Username: $USERNAME" \
-            -H "X-MaaS-Group: $ADMIN_GROUP" > /dev/null
-        ((COUNT++))
-    done <<< "$IDS"
-    echo "Revoked all $COUNT key(s) for $USERNAME"
-    ;;
-
 *)
     echo "Unknown action: $ACTION"
-    echo "Usage: $0 <create|list|revoke|revoke-user> ..."
+    echo "Usage: $0 <create|list|revoke> ..."
     exit 1
     ;;
 esac
