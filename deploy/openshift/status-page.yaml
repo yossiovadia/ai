@@ -123,8 +123,8 @@ data:
     </p>
     <div class="grid">
       <div class="card p1">
-        <div class="card-title"><span class="badge open">P1</span> OpenAI Streaming Token Counting</div>
-        <div class="card-body">Token counting works for Anthropic streaming but not OpenAI Responses API streaming (Codex shows 0 tokens). Needs stream_options injection + OpenAI SSE usage parser. IPP had this — port required.</div>
+        <div class="card-title"><span class="badge done">Done</span> OpenAI Responses API Token Counting</div>
+        <div class="card-body">Codex/Responses API token counting fixed. Chat Completions streaming still needs stream_options injection (lower priority).</div>
       </div>
       <div class="card p1">
         <div class="card-title"><span class="badge open">P1</span> Database Backup</div>
