@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# Multi-user load test through the dogfood gateway.
+#
+# Sends realistic multi-turn conversations through the full
+# auth + metering pipeline, backed by llm-katan (zero cost).
+#
+# Usage:
+#   ./scripts/benchmark.sh                          # 20 users, 10 turns each
+#   ./scripts/benchmark.sh --users 50 --turns 5     # 50 users, 5 turns
+#   ./scripts/benchmark.sh --cleanup                # delete test data only
+#
+# Prerequisites:
+#   - oc login to the dogfood cluster
+#   - benchmark listener deployed (port 8082)
+#   - llm-katan deployed on the cluster
+
+set -euo pipefail
+
+NAMESPACE="ai-gateway-dogfood"
+NUM_USERS=20
+NUM_TURNS=10
+CONCURRENT=10
+CLEANUP_ONLY=false
+USER_PREFIX="bench-user"
+USER_DOMAIN="test"
+
+for arg in "$@"; do
+    case "$arg" in
+        --users) shift; NUM_USERS="$1"; shift ;;
+        --turns) shift; NUM_TURNS="$1"; shift ;;
+        --concurrent) shift; CONCURRENT="$1"; shift ;;
+        --cleanup) CLEANUP_ONLY=true ;;
+    esac
+done
+
+# ── Preflight ────────────────────────────────────────────────
+
+if ! oc whoami > /dev/null 2>&1; then
+    echo "ERROR: not logged in to OpenShift"
+    exit 1
+fi
+
+BENCHMARK_ROUTE=$(oc -n "$NAMESPACE" get route ai-gateway-benchmark -o jsonpath='{.spec.host}' 2>/dev/null)
+if [[ -z "$BENCHMARK_ROUTE" ]]; then
+    echo "ERROR: benchmark route not found. Deploy benchmark listener first."
+    exit 1
+fi
+BENCHMARK_URL="https://$BENCHMARK_ROUTE"
+
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
+
+# ── Cleanup mode ─────────────────────────────────────────────
+
+cleanup() {
+    echo "Cleaning up benchmark data..."
+
+    # Revoke all bench-user keys
+    oc -n "$NAMESPACE" port-forward svc/maas-api 18080:8080 > /dev/null 2>&1 &
+    PF_PID=$!
+    sleep 2
+
+    for i in $(seq -w 1 99); do
+        USERNAME="${USER_PREFIX}-${i}@${USER_DOMAIN}"
+        RESPONSE=$(curl -s -X POST "http://localhost:18080/v1/api-keys/search" \
+            -H "Content-Type: application/json" \
+            -H "X-MaaS-Username: $USERNAME" \
+            -H 'X-MaaS-Group: ["benchmark"]' \
+            -d '{}')
+        IDS=$(echo "$RESPONSE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for k in data.get('data', []):
+    if k['status'] == 'active':
+        print(k['id'])
+" 2>/dev/null)
+        while read -r ID; do
+            [[ -z "$ID" ]] && continue
+            curl -s -X DELETE "http://localhost:18080/v1/api-keys/$ID" \
+                -H "Content-Type: application/json" \
+                -H "X-MaaS-Username: $USERNAME" \
+                -H 'X-MaaS-Group: ["benchmark"]' > /dev/null
+        done <<< "$IDS"
+    done
+    kill $PF_PID 2>/dev/null
+
+    # Delete metering events for benchmark users
+    echo "Deleting metering events for benchmark users..."
+    oc -n "$NAMESPACE" exec postgresql-0 -- psql -U aigateway -d aigateway -q \
+        -c "DELETE FROM events WHERE user_id LIKE '${USER_PREFIX}-%@${USER_DOMAIN}';" 2>/dev/null || true
+
+    echo "Cleanup complete."
+}
+
+if $CLEANUP_ONLY; then
+    cleanup
+    exit 0
+fi
+
+# ── Create test users ────────────────────────────────────────
+
+echo "=========================================="
+echo "  Multi-User Benchmark"
+echo "=========================================="
+echo "  Users:      $NUM_USERS"
+echo "  Turns/user: $NUM_TURNS"
+echo "  Concurrent: $CONCURRENT"
+echo "  Endpoint:   $BENCHMARK_URL"
+echo ""
+
+echo "Creating $NUM_USERS test users..."
+oc -n "$NAMESPACE" port-forward svc/maas-api 18080:8080 > /dev/null 2>&1 &
+PF_PID=$!
+sleep 2
+
+for i in $(seq -w 1 "$NUM_USERS"); do
+    USERNAME="${USER_PREFIX}-${i}@${USER_DOMAIN}"
+    RESPONSE=$(curl -s -X POST "http://localhost:18080/v1/api-keys" \
+        -H "Content-Type: application/json" \
+        -H "X-MaaS-Username: $USERNAME" \
+        -H 'X-MaaS-Group: ["benchmark"]' \
+        -d "{\"name\":\"bench-${i}\",\"description\":\"Benchmark user ${i}\"}")
+    KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
+    if [[ -n "$KEY" ]]; then
+        echo "$USERNAME|$KEY" >> "$TMPDIR/users.txt"
+    else
+        echo "  WARN: failed to create key for $USERNAME"
+    fi
+done
+kill $PF_PID 2>/dev/null
+
+CREATED=$(wc -l < "$TMPDIR/users.txt" | tr -d ' ')
+echo "  Created $CREATED keys"
+echo ""
+
+# ── Build payload template ───────────────────────────────────
+
+SYSTEM_PROMPT="You are an expert software engineer working on a high-performance Rust proxy called Praxis. The codebase implements HTTP filters for AI inference workloads including request classification, model routing, token counting, credential injection, and protocol translation between OpenAI and Anthropic APIs. You help with code reviews, architecture decisions, debugging, and implementation of new filters. The proxy is built on top of Pingora and uses an async pipeline architecture with filter_metadata for inter-filter communication. Key patterns include BodyMode::Stream for SSE processing, set_metadata for writing to the filter context, and request_headers_to_remove for header stripping."
+
+build_messages() {
+    local turn=$1
+    local msgs="["
+    for t in $(seq 1 "$turn"); do
+        if (( t > 1 )); then msgs+=","; fi
+        if (( t % 2 == 1 )); then
+            msgs+="{\"role\":\"user\",\"content\":\"Turn $t: Can you explain how the filter pipeline handles streaming SSE responses? I need to understand the data flow from the upstream provider through each filter back to the client. Specifically how does BodyMode::Stream interact with the token_count filter to extract usage from the final SSE chunk without buffering the entire response? Also how does filter_metadata propagate between filters in the response path given that response hooks execute in reverse order? Please include code examples from the actual codebase.\"}"
+        else
+            msgs+="{\"role\":\"assistant\",\"content\":\"Turn $t response: The streaming pipeline works by processing each SSE chunk as it arrives. The token_count filter operates in BodyMode::Stream mode and watches for the final chunk containing usage data. In the Anthropic format this is the message_delta event with usage.output_tokens. In OpenAI format it appears in the final chunk with usage object. The filter extracts these values and writes them to filter_metadata as token.input token.output and token.total. Since response hooks run in reverse pipeline order the external_metering filter which is declared before token_count in the config actually runs after it in the response path. This means by the time metering reads filter_metadata the token counts are already populated. The key insight is that filter_metadata is shared mutable state scoped to the request lifetime so any filter can read values written by any other filter regardless of pipeline position.\"}"
+        fi
+    done
+    msgs+="]"
+    echo "$msgs"
+}
+
+# ── Run benchmark ────────────────────────────────────────────
+
+echo "Running benchmark..."
+echo ""
+
+run_user_session() {
+    local username="$1"
+    local apikey="$2"
+    local user_latencies="$TMPDIR/latency_${username}.txt"
+
+    for turn in $(seq 1 "$NUM_TURNS"); do
+        local messages
+        messages=$(build_messages "$turn")
+        local payload="{\"model\":\"claude-sonnet-4\",\"max_tokens\":512,\"stream\":false,\"system\":\"$SYSTEM_PROMPT\",\"messages\":$messages}"
+
+        local start_ms
+        start_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+
+        local http_code
+        http_code=$(curl -sk -o /dev/null -w "%{http_code}" \
+            -X POST "$BENCHMARK_URL/v1/messages" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $apikey" \
+            -H "anthropic-version: 2023-06-01" \
+            --max-time 30 \
+            -d "$payload" 2>/dev/null)
+
+        local end_ms
+        end_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+        local latency=$(( end_ms - start_ms ))
+
+        echo "$latency|$http_code" >> "$user_latencies"
+    done
+}
+
+export -f run_user_session build_messages
+export BENCHMARK_URL NUM_TURNS TMPDIR SYSTEM_PROMPT
+
+START_TIME=$(python3 -c "import time; print(int(time.time()*1000))")
+
+# Run users in parallel
+cat "$TMPDIR/users.txt" | xargs -P "$CONCURRENT" -I {} bash -c '
+    IFS="|" read -r username apikey <<< "{}"
+    run_user_session "$username" "$apikey"
+'
+
+END_TIME=$(python3 -c "import time; print(int(time.time()*1000))")
+DURATION_MS=$(( END_TIME - START_TIME ))
+
+# ── Collect results ──────────────────────────────────────────
+
+echo ""
+echo "Collecting results..."
+
+python3 -c "
+import os, sys
+
+tmpdir = '$TMPDIR'
+num_users = $NUM_USERS
+num_turns = $NUM_TURNS
+duration_ms = $DURATION_MS
+
+latencies = []
+successes = 0
+failures = 0
+errors_by_code = {}
+
+for f in os.listdir(tmpdir):
+    if not f.startswith('latency_'):
+        continue
+    with open(os.path.join(tmpdir, f)) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split('|')
+            lat = int(parts[0])
+            code = parts[1] if len(parts) > 1 else '000'
+            latencies.append(lat)
+            if code == '200':
+                successes += 1
+            else:
+                failures += 1
+                errors_by_code[code] = errors_by_code.get(code, 0) + 1
+
+total = len(latencies)
+if total == 0:
+    print('No results collected!')
+    sys.exit(1)
+
+latencies.sort()
+p50 = latencies[int(total * 0.50)]
+p95 = latencies[int(total * 0.95)]
+p99 = latencies[int(total * 0.99)]
+avg = sum(latencies) // total
+duration_s = duration_ms / 1000.0
+rps = total / duration_s if duration_s > 0 else 0
+
+print()
+print('==========================================')
+print('  Benchmark Results')
+print('==========================================')
+print()
+print('  Config:')
+print('    Users:       {}'.format(num_users))
+print('    Turns/user:  {}'.format(num_turns))
+print('    Total:       {} requests ({} succeeded, {} failed)'.format(total, successes, failures))
+print('    Duration:    {:.1f}s'.format(duration_s))
+print()
+print('  Latency (ms):')
+print('    avg:   {}'.format(avg))
+print('    p50:   {}'.format(p50))
+print('    p95:   {}'.format(p95))
+print('    p99:   {}'.format(p99))
+print('    min:   {}'.format(latencies[0]))
+print('    max:   {}'.format(latencies[-1]))
+print()
+print('  Throughput:  {:.1f} req/s'.format(rps))
+if failures > 0:
+    print()
+    print('  Errors:')
+    for code, count in sorted(errors_by_code.items()):
+        print('    HTTP {}: {}'.format(code, count))
+print()
+print('  Dashboard: check metering for per-user breakdown')
+print('  Cleanup:   ./scripts/benchmark.sh --cleanup')
+print()
+print('==========================================')
+"
