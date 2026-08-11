@@ -5,7 +5,7 @@
 #   ./scripts/manage-keys.sh create <username> [key-name] [group]
 #   ./scripts/manage-keys.sh list [username]
 #   ./scripts/manage-keys.sh revoke <username> [key-name]
-#   ./scripts/manage-keys.sh revoke-all <username>
+#   ./scripts/manage-keys.sh revoke-user <username>
 #
 # Examples:
 #   ./scripts/manage-keys.sh create noyitz@redhat.com
@@ -13,12 +13,42 @@
 #   ./scripts/manage-keys.sh list
 #   ./scripts/manage-keys.sh list noyitz@redhat.com
 #   ./scripts/manage-keys.sh revoke noyitz@redhat.com dogfood-noyitz
-#   ./scripts/manage-keys.sh revoke-all test-user@redhat.com
+#   ./scripts/manage-keys.sh revoke-user test-user@redhat.com
 
 set -euo pipefail
 
 NAMESPACE="ai-gateway-dogfood"
-ACTION="${1:?Usage: $0 <create|list|revoke|revoke-all> ...}"
+
+show_help() {
+    cat <<'HELP'
+Usage: ./scripts/manage-keys.sh <command> [options]
+
+Commands:
+  create <email> [key-name] [group]   Create an API key for a user
+  list [email]                        List active keys (all or for one user)
+  revoke <email> [key-name]           Revoke specific key(s) for a user
+  revoke-user <email>                  Revoke all keys for a user
+
+Options:
+  --help, -h    Show this help
+
+Examples:
+  ./scripts/manage-keys.sh create noyitz@redhat.com
+  ./scripts/manage-keys.sh create chris.wright@redhat.com cto-demo executive
+  ./scripts/manage-keys.sh list
+  ./scripts/manage-keys.sh list noyitz@redhat.com
+  ./scripts/manage-keys.sh revoke noyitz@redhat.com dogfood-noyitz
+  ./scripts/manage-keys.sh revoke-user test-user@redhat.com
+
+Key name defaults to "dogfood-<username>" if omitted.
+Group defaults to "ai-eng" if omitted.
+HELP
+    exit 0
+}
+
+[[ "${1:-}" == "--help" || "${1:-}" == "-h" || -z "${1:-}" ]] && show_help
+
+ACTION="$1"
 shift
 
 if ! oc whoami > /dev/null 2>&1; then
@@ -50,7 +80,12 @@ api() {
 case "$ACTION" in
 
 create)
-    USERNAME="${1:?Usage: $0 create <username> [key-name] [group]}"
+    if [[ -z "${1:-}" ]]; then
+        echo "Usage: $0 create <email> [key-name] [group]"
+        echo "  e.g.: $0 create noyitz@redhat.com"
+        exit 1
+    fi
+    USERNAME="$1"
     KEY_NAME="${2:-dogfood-${USERNAME%%@*}}"
     GROUP="${3:-ai-eng}"
 
@@ -123,7 +158,11 @@ print('\nTotal: {} key(s)'.format(len(keys)))
     ;;
 
 revoke)
-    USERNAME="${1:?Usage: $0 revoke <username> [key-name]}"
+    if [[ -z "${1:-}" ]]; then
+        echo "Usage: $0 revoke <email> [key-name]"
+        exit 1
+    fi
+    USERNAME="$1"
     KEY_NAME="${2:-}"
 
     # Search as the target user to see their keys
@@ -162,8 +201,12 @@ for k in data.get('data', []):
     echo "Revoked $COUNT key(s) for $USERNAME"
     ;;
 
-revoke-all)
-    USERNAME="${1:?Usage: $0 revoke-all <username>}"
+revoke-user)
+    if [[ -z "${1:-}" ]]; then
+        echo "Usage: $0 revoke-user <email>"
+        exit 1
+    fi
+    USERNAME="$1"
 
     RESPONSE=$(curl -s -X POST "http://localhost:18080/v1/api-keys/search" \
         -H "Content-Type: application/json" \
@@ -196,7 +239,7 @@ print('\n'.join(ids))
 
 *)
     echo "Unknown action: $ACTION"
-    echo "Usage: $0 <create|list|revoke|revoke-all> ..."
+    echo "Usage: $0 <create|list|revoke|revoke-user> ..."
     exit 1
     ;;
 esac
