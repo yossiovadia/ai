@@ -151,8 +151,8 @@ data:
         <div class="card-body">All components are single replica. Any pod restart = brief downtime. Need replicas + PDB.</div>
       </div>
       <div class="card p2">
-        <div class="card-title"><span class="badge planned">P2</span> Managed Database</div>
-        <div class="card-body">PostgreSQL on a PVC is not production-grade. Should use IBM Cloud Databases or similar managed service.</div>
+        <div class="card-title"><span class="badge planned">P2</span> Metering Scale (NATS JetStream)</div>
+        <div class="card-body">Current: synchronous PG writes per request. Plan: NATS JetStream → batch consumer → partitioned PG with rollups. Also need in-memory balance cache to fix the real hot-path bottleneck (synchronous balance check). Architecture reviewed and validated. See docs/plans/2026-08-12-metering-scale-architecture.md.</div>
       </div>
       <div class="card p2">
         <div class="card-title"><span class="badge planned">P2</span> Rate Limiting</div>
