@@ -135,6 +135,10 @@ data:
         <div class="card-body">No Prometheus scraping. No alerts on pod crashes, high error rates, or disk pressure. Flying blind.</div>
       </div>
       <div class="card p1">
+        <div class="card-title"><span class="badge open">P1</span> Subscription Management</div>
+        <div class="card-body">No UI or tooling to view/manage MaaSSubscription CRs. Adding a new group requires kubectl. Need admin visibility into which groups/teams are onboarded.</div>
+      </div>
+      <div class="card p1">
         <div class="card-title"><span class="badge open">P1</span> maas-api Authentication</div>
         <div class="card-body">Key management API accepts identity from raw headers. No Keycloak/OIDC. Anyone with the URL can create keys.</div>
       </div>
