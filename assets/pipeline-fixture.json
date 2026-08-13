@@ -466,8 +466,7 @@
           "chain_index": 0,
           "failure_mode": "closed",
           "filter": "api_key_auth",
-          "pipeline_index": 0,
-          "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+          "pipeline_index": 0
         },
         {
           "name": null,
@@ -475,8 +474,7 @@
           "chain_index": 1,
           "failure_mode": "closed",
           "filter": "identity_header_guard",
-          "pipeline_index": 1,
-          "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+          "pipeline_index": 1
         },
         {
           "name": null,
@@ -484,8 +482,7 @@
           "chain_index": 2,
           "failure_mode": "closed",
           "filter": "router",
-          "pipeline_index": 2,
-          "description": "Matches the request path against configured route rules and selects the upstream cluster."
+          "pipeline_index": 2
         },
         {
           "name": null,
@@ -493,8 +490,7 @@
           "chain_index": 3,
           "failure_mode": "closed",
           "filter": "external_metering",
-          "pipeline_index": 3,
-          "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+          "pipeline_index": 3
         },
         {
           "name": null,
@@ -502,8 +498,7 @@
           "chain_index": 4,
           "failure_mode": "closed",
           "filter": "token_count",
-          "pipeline_index": 4,
-          "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+          "pipeline_index": 4
         },
         {
           "name": null,
@@ -511,8 +506,7 @@
           "chain_index": 5,
           "failure_mode": "closed",
           "filter": "token_usage_headers",
-          "pipeline_index": 5,
-          "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+          "pipeline_index": 5
         },
         {
           "name": null,
@@ -520,8 +514,7 @@
           "chain_index": 6,
           "failure_mode": "closed",
           "filter": "credential_injection",
-          "pipeline_index": 6,
-          "description": "Strips the client API key and injects the real provider credential. The security boundary \u2014 users never see real provider keys."
+          "pipeline_index": 6
         },
         {
           "name": null,
@@ -529,8 +522,7 @@
           "chain_index": 7,
           "failure_mode": "closed",
           "filter": "headers",
-          "pipeline_index": 7,
-          "description": "Sets static request headers before forwarding to the upstream provider."
+          "pipeline_index": 7
         },
         {
           "name": null,
@@ -538,8 +530,7 @@
           "chain_index": 8,
           "failure_mode": "closed",
           "filter": "load_balancer",
-          "pipeline_index": 8,
-          "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+          "pipeline_index": 8
         }
       ]
     },
@@ -555,8 +546,7 @@
           "chain_index": 0,
           "failure_mode": "closed",
           "filter": "api_key_auth",
-          "pipeline_index": 0,
-          "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+          "pipeline_index": 0
         },
         {
           "name": null,
@@ -564,8 +554,7 @@
           "chain_index": 1,
           "failure_mode": "closed",
           "filter": "identity_header_guard",
-          "pipeline_index": 1,
-          "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+          "pipeline_index": 1
         },
         {
           "name": null,
@@ -573,8 +562,7 @@
           "chain_index": 2,
           "failure_mode": "closed",
           "filter": "router",
-          "pipeline_index": 2,
-          "description": "Matches the request path against configured route rules and selects the upstream cluster."
+          "pipeline_index": 2
         },
         {
           "name": null,
@@ -582,8 +570,7 @@
           "chain_index": 3,
           "failure_mode": "closed",
           "filter": "external_metering",
-          "pipeline_index": 3,
-          "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+          "pipeline_index": 3
         },
         {
           "name": null,
@@ -591,8 +578,7 @@
           "chain_index": 4,
           "failure_mode": "closed",
           "filter": "token_count",
-          "pipeline_index": 4,
-          "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+          "pipeline_index": 4
         },
         {
           "name": null,
@@ -600,8 +586,7 @@
           "chain_index": 5,
           "failure_mode": "closed",
           "filter": "token_usage_headers",
-          "pipeline_index": 5,
-          "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+          "pipeline_index": 5
         },
         {
           "name": null,
@@ -609,8 +594,7 @@
           "chain_index": 6,
           "failure_mode": "closed",
           "filter": "credential_injection",
-          "pipeline_index": 6,
-          "description": "Strips the client API key and injects the real provider credential. The security boundary \u2014 users never see real provider keys."
+          "pipeline_index": 6
         },
         {
           "name": null,
@@ -618,8 +602,7 @@
           "chain_index": 7,
           "failure_mode": "closed",
           "filter": "headers",
-          "pipeline_index": 7,
-          "description": "Sets static request headers before forwarding to the upstream provider."
+          "pipeline_index": 7
         },
         {
           "name": null,
@@ -627,8 +610,7 @@
           "chain_index": 8,
           "failure_mode": "closed",
           "filter": "load_balancer",
-          "pipeline_index": 8,
-          "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+          "pipeline_index": 8
         }
       ]
     },
@@ -644,8 +626,7 @@
           "chain_index": 0,
           "failure_mode": "closed",
           "filter": "api_key_auth",
-          "pipeline_index": 0,
-          "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+          "pipeline_index": 0
         },
         {
           "name": null,
@@ -653,8 +634,7 @@
           "chain_index": 1,
           "failure_mode": "closed",
           "filter": "identity_header_guard",
-          "pipeline_index": 1,
-          "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+          "pipeline_index": 1
         },
         {
           "name": null,
@@ -662,8 +642,7 @@
           "chain_index": 2,
           "failure_mode": "closed",
           "filter": "router",
-          "pipeline_index": 2,
-          "description": "Matches the request path against configured route rules and selects the upstream cluster."
+          "pipeline_index": 2
         },
         {
           "name": null,
@@ -671,8 +650,7 @@
           "chain_index": 3,
           "failure_mode": "closed",
           "filter": "external_metering",
-          "pipeline_index": 3,
-          "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+          "pipeline_index": 3
         },
         {
           "name": null,
@@ -680,8 +658,7 @@
           "chain_index": 4,
           "failure_mode": "closed",
           "filter": "token_count",
-          "pipeline_index": 4,
-          "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+          "pipeline_index": 4
         },
         {
           "name": null,
@@ -689,8 +666,7 @@
           "chain_index": 5,
           "failure_mode": "closed",
           "filter": "token_usage_headers",
-          "pipeline_index": 5,
-          "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+          "pipeline_index": 5
         },
         {
           "name": null,
@@ -698,8 +674,7 @@
           "chain_index": 6,
           "failure_mode": "closed",
           "filter": "headers",
-          "pipeline_index": 6,
-          "description": "Sets static request headers before forwarding to the upstream provider."
+          "pipeline_index": 6
         },
         {
           "name": null,
@@ -707,10 +682,38 @@
           "chain_index": 7,
           "failure_mode": "closed",
           "filter": "load_balancer",
-          "pipeline_index": 7,
-          "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+          "pipeline_index": 7
         }
       ]
     }
-  ]
+  ],
+  "filter_types": {
+    "api_key_auth": {
+      "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+    },
+    "identity_header_guard": {
+      "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+    },
+    "router": {
+      "description": "Matches the request path against configured route rules and selects the upstream cluster."
+    },
+    "external_metering": {
+      "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+    },
+    "token_count": {
+      "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+    },
+    "token_usage_headers": {
+      "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+    },
+    "credential_injection": {
+      "description": "Strips the client API key and injects the real provider credential. The security boundary \u2014 users never see real provider keys."
+    },
+    "headers": {
+      "description": "Sets static request headers before forwarding to the upstream provider."
+    },
+    "load_balancer": {
+      "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+    }
+  }
 }

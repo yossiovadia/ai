@@ -838,7 +838,8 @@ function renderPipeline(listener) {
 
   for (let i = 0; i < listener.filters.length; i++) {
     const f = listener.filters[i];
-    const cat = f.category || inferCategory(f.filter);
+    const typeInfo = (data.filter_types || {})[f.filter] || {};
+    const cat = f.category || typeInfo.category || inferCategory(f.filter);
     el.appendChild(makeFilter(f, cat, i));
     if (i < listener.filters.length - 1) {
       el.appendChild(makeConnector());
@@ -1159,7 +1160,8 @@ function openModal(filter, cat) {
   const modal = document.getElementById('modal');
   const body = document.getElementById('modalBody');
   const color = CAT_COLORS[cat] || 'var(--text-1)';
-  const desc = filter.description || '';
+  const typeInfo = (data.filter_types || {})[filter.filter] || {};
+  const desc = filter.description || typeInfo.description || '';
   const cfg = getFilterConfig(filter);
   const hasConfig = Object.keys(cfg).length > 0;
 
