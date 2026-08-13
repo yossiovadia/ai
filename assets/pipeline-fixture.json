@@ -1,0 +1,716 @@
+{
+  "config_source": "/tmp/praxis-config.yaml",
+  "configuration": {
+    "admin": {
+      "address": "0.0.0.0:9901",
+      "verbose": false
+    },
+    "body_limits": {
+      "max_request_bytes": 10485760,
+      "max_response_bytes": 10485760
+    },
+    "clusters": [],
+    "filter_chains": [
+      {
+        "name": "anthropic",
+        "filters": [
+          {
+            "filter": "api_key_auth",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "validate_url": "http://maas-api:8080/internal/v1/api-keys/validate",
+            "token_header": "x-api-key",
+            "cache_ttl_seconds": 300,
+            "timeout_seconds": 5
+          },
+          {
+            "filter": "identity_header_guard",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "prefix": "x-tenant-"
+          },
+          {
+            "filter": "router",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "routes": [
+              {
+                "path_prefix": "/",
+                "cluster": "anthropic"
+              }
+            ]
+          },
+          {
+            "filter": "external_metering",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "metering_url": "http://metering-service:8080",
+            "timeout_seconds": 5,
+            "feature_key": "inference-tokens",
+            "source": "praxis-ai",
+            "fail_open": true,
+            "identity_header_prefix": "x-tenant-",
+            "default_model": "unknown"
+          },
+          {
+            "filter": "token_count",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "provider": "anthropic"
+          },
+          {
+            "filter": "token_usage_headers",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed"
+          },
+          {
+            "filter": "credential_injection",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "clusters": [
+              {
+                "name": "anthropic",
+                "header": "x-api-key",
+                "env_var": "[REDACTED]",
+                "strip_client_credential": true
+              }
+            ]
+          },
+          {
+            "filter": "headers",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "request_set": [
+              {
+                "name": "Host",
+                "value": "api.anthropic.com"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              }
+            ]
+          },
+          {
+            "filter": "load_balancer",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "clusters": [
+              {
+                "name": "anthropic",
+                "tls": {
+                  "sni": "api.anthropic.com"
+                },
+                "endpoints": [
+                  "api.anthropic.com:443"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "openai",
+        "filters": [
+          {
+            "filter": "api_key_auth",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "validate_url": "http://maas-api:8080/internal/v1/api-keys/validate",
+            "token_header": "authorization",
+            "cache_ttl_seconds": 300,
+            "timeout_seconds": 5
+          },
+          {
+            "filter": "identity_header_guard",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "prefix": "x-tenant-"
+          },
+          {
+            "filter": "router",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "routes": [
+              {
+                "path_prefix": "/",
+                "cluster": "openai"
+              }
+            ]
+          },
+          {
+            "filter": "external_metering",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "metering_url": "http://metering-service:8080",
+            "timeout_seconds": 5,
+            "feature_key": "inference-tokens",
+            "source": "praxis-ai",
+            "fail_open": true,
+            "identity_header_prefix": "x-tenant-",
+            "default_model": "unknown"
+          },
+          {
+            "filter": "token_count",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "provider": "openai"
+          },
+          {
+            "filter": "token_usage_headers",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed"
+          },
+          {
+            "filter": "credential_injection",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "clusters": [
+              {
+                "name": "openai",
+                "header": "Authorization",
+                "env_var": "[REDACTED]",
+                "header_prefix": "Bearer ",
+                "strip_client_credential": true
+              }
+            ]
+          },
+          {
+            "filter": "headers",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "request_set": [
+              {
+                "name": "Host",
+                "value": "api.openai.com"
+              }
+            ]
+          },
+          {
+            "filter": "load_balancer",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "clusters": [
+              {
+                "name": "openai",
+                "tls": {
+                  "sni": "api.openai.com"
+                },
+                "endpoints": [
+                  "api.openai.com:443"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "benchmark",
+        "filters": [
+          {
+            "filter": "api_key_auth",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "validate_url": "http://maas-api:8080/internal/v1/api-keys/validate",
+            "token_header": "x-api-key",
+            "cache_ttl_seconds": 300,
+            "timeout_seconds": 5
+          },
+          {
+            "filter": "identity_header_guard",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "prefix": "x-tenant-"
+          },
+          {
+            "filter": "router",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "routes": [
+              {
+                "path_prefix": "/",
+                "cluster": "llm-katan"
+              }
+            ]
+          },
+          {
+            "filter": "external_metering",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "metering_url": "http://metering-service:8080",
+            "timeout_seconds": 5,
+            "feature_key": "inference-tokens",
+            "source": "praxis-ai-benchmark",
+            "fail_open": true,
+            "identity_header_prefix": "x-tenant-",
+            "default_model": "unknown"
+          },
+          {
+            "filter": "token_count",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "provider": "anthropic"
+          },
+          {
+            "filter": "token_usage_headers",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed"
+          },
+          {
+            "filter": "headers",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "request_set": [
+              {
+                "name": "x-api-key",
+                "value": "llm-katan-anthropic-key"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              }
+            ]
+          },
+          {
+            "filter": "load_balancer",
+            "branch_chains": null,
+            "conditions": [],
+            "name": null,
+            "response_conditions": [],
+            "failure_mode": "closed",
+            "clusters": [
+              {
+                "name": "llm-katan",
+                "endpoints": [
+                  "llm-katan:8000"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "insecure_options": {
+      "allow_open_security_filters": false,
+      "allow_private_endpoints": false,
+      "allow_private_health_checks": false,
+      "allow_private_upstreams": false,
+      "allow_public_admin": true,
+      "allow_root": false,
+      "allow_tls_no_verify": false,
+      "allow_tls_without_sni": false,
+      "allow_unbounded_body": false,
+      "csrf_log_only": false,
+      "skip_pipeline_checks": {
+        "conditional_security": false,
+        "conflicting_cluster_selectors": false,
+        "duplicate_load_balancers": false,
+        "duplicate_rewrite_filters": false,
+        "duplicate_routers": false,
+        "lb_without_router": false,
+        "misaligned_clusters": false,
+        "unreachable_filters": false
+      },
+      "skip_pipeline_validation": false
+    },
+    "listeners": [
+      {
+        "name": "anthropic",
+        "address": "0.0.0.0:8080",
+        "cluster": null,
+        "downstream_read_timeout_ms": null,
+        "filter_chains": [
+          "anthropic"
+        ],
+        "max_connections": null,
+        "protocol": "http",
+        "tcp_session_timeout_ms": null,
+        "tcp_max_duration_secs": null,
+        "tls": null,
+        "upstream": null
+      },
+      {
+        "name": "openai",
+        "address": "0.0.0.0:8081",
+        "cluster": null,
+        "downstream_read_timeout_ms": null,
+        "filter_chains": [
+          "openai"
+        ],
+        "max_connections": null,
+        "protocol": "http",
+        "tcp_session_timeout_ms": null,
+        "tcp_max_duration_secs": null,
+        "tls": null,
+        "upstream": null
+      },
+      {
+        "name": "benchmark",
+        "address": "0.0.0.0:8082",
+        "cluster": null,
+        "downstream_read_timeout_ms": null,
+        "filter_chains": [
+          "benchmark"
+        ],
+        "max_connections": null,
+        "protocol": "http",
+        "tcp_session_timeout_ms": null,
+        "tcp_max_duration_secs": null,
+        "tls": null,
+        "upstream": null
+      }
+    ],
+    "metrics": {
+      "filter_duration": false
+    },
+    "runtime": {
+      "global_queue_interval": 61,
+      "log_overrides": {},
+      "max_connections": null,
+      "max_memory_bytes": null,
+      "subrequest_circuit_breaker": null,
+      "subrequest_max_connections": null,
+      "subrequest_pool_size": 128,
+      "threads": 0,
+      "upstream_ca_file": null,
+      "upstream_keepalive_pool_size": 64,
+      "work_stealing": true
+    },
+    "shutdown_timeout_secs": 30
+  },
+  "resolved_listeners": [
+    {
+      "name": "anthropic",
+      "chains": [
+        "anthropic"
+      ],
+      "filters": [
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 0,
+          "failure_mode": "closed",
+          "filter": "api_key_auth",
+          "pipeline_index": 0,
+          "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 1,
+          "failure_mode": "closed",
+          "filter": "identity_header_guard",
+          "pipeline_index": 1,
+          "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 2,
+          "failure_mode": "closed",
+          "filter": "router",
+          "pipeline_index": 2,
+          "description": "Matches the request path against configured route rules and selects the upstream cluster."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 3,
+          "failure_mode": "closed",
+          "filter": "external_metering",
+          "pipeline_index": 3,
+          "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 4,
+          "failure_mode": "closed",
+          "filter": "token_count",
+          "pipeline_index": 4,
+          "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 5,
+          "failure_mode": "closed",
+          "filter": "token_usage_headers",
+          "pipeline_index": 5,
+          "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 6,
+          "failure_mode": "closed",
+          "filter": "credential_injection",
+          "pipeline_index": 6,
+          "description": "Strips the client API key and injects the real provider credential. The security boundary \u2014 users never see real provider keys."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 7,
+          "failure_mode": "closed",
+          "filter": "headers",
+          "pipeline_index": 7,
+          "description": "Sets static request headers before forwarding to the upstream provider."
+        },
+        {
+          "name": null,
+          "chain": "anthropic",
+          "chain_index": 8,
+          "failure_mode": "closed",
+          "filter": "load_balancer",
+          "pipeline_index": 8,
+          "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+        }
+      ]
+    },
+    {
+      "name": "openai",
+      "chains": [
+        "openai"
+      ],
+      "filters": [
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 0,
+          "failure_mode": "closed",
+          "filter": "api_key_auth",
+          "pipeline_index": 0,
+          "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 1,
+          "failure_mode": "closed",
+          "filter": "identity_header_guard",
+          "pipeline_index": 1,
+          "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 2,
+          "failure_mode": "closed",
+          "filter": "router",
+          "pipeline_index": 2,
+          "description": "Matches the request path against configured route rules and selects the upstream cluster."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 3,
+          "failure_mode": "closed",
+          "filter": "external_metering",
+          "pipeline_index": 3,
+          "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 4,
+          "failure_mode": "closed",
+          "filter": "token_count",
+          "pipeline_index": 4,
+          "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 5,
+          "failure_mode": "closed",
+          "filter": "token_usage_headers",
+          "pipeline_index": 5,
+          "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 6,
+          "failure_mode": "closed",
+          "filter": "credential_injection",
+          "pipeline_index": 6,
+          "description": "Strips the client API key and injects the real provider credential. The security boundary \u2014 users never see real provider keys."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 7,
+          "failure_mode": "closed",
+          "filter": "headers",
+          "pipeline_index": 7,
+          "description": "Sets static request headers before forwarding to the upstream provider."
+        },
+        {
+          "name": null,
+          "chain": "openai",
+          "chain_index": 8,
+          "failure_mode": "closed",
+          "filter": "load_balancer",
+          "pipeline_index": 8,
+          "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+        }
+      ]
+    },
+    {
+      "name": "benchmark",
+      "chains": [
+        "benchmark"
+      ],
+      "filters": [
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 0,
+          "failure_mode": "closed",
+          "filter": "api_key_auth",
+          "pipeline_index": 0,
+          "description": "Validates API keys against an external key management service via HTTP callout. Extracts authenticated identity into filter metadata. Caches validated keys in-memory with configurable TTL."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 1,
+          "failure_mode": "closed",
+          "filter": "identity_header_guard",
+          "pipeline_index": 1,
+          "description": "Captures request headers matching a configurable prefix into filter metadata and strips them before upstream forwarding. Prevents identity headers from leaking to LLM providers."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 2,
+          "failure_mode": "closed",
+          "filter": "router",
+          "pipeline_index": 2,
+          "description": "Matches the request path against configured route rules and selects the upstream cluster."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 3,
+          "failure_mode": "closed",
+          "filter": "external_metering",
+          "pipeline_index": 3,
+          "description": "Reports token usage to an external metering service via CloudEvents. Reads identity from filter metadata for per-user attribution. Fire-and-forget \u2014 never blocks the response path."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 4,
+          "failure_mode": "closed",
+          "filter": "token_count",
+          "pipeline_index": 4,
+          "description": "Extracts token usage from provider response bodies \u2014 streaming SSE and non-streaming JSON. Supports OpenAI, Anthropic, Google, Bedrock, and Azure formats."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 5,
+          "failure_mode": "closed",
+          "filter": "token_usage_headers",
+          "pipeline_index": 5,
+          "description": "Injects Praxis-Token-Input/Output/Total response headers from token count metadata."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 6,
+          "failure_mode": "closed",
+          "filter": "headers",
+          "pipeline_index": 6,
+          "description": "Sets static request headers before forwarding to the upstream provider."
+        },
+        {
+          "name": null,
+          "chain": "benchmark",
+          "chain_index": 7,
+          "failure_mode": "closed",
+          "filter": "load_balancer",
+          "pipeline_index": 7,
+          "description": "Selects an endpoint from the configured upstream cluster. Handles TLS, connection pooling, and health checking."
+        }
+      ]
+    }
+  ]
+}
