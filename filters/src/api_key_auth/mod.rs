@@ -17,24 +17,18 @@ mod config;
 
 #[cfg(test)]
 #[expect(clippy::allow_attributes, reason = "blanket test suppressions")]
-#[allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests"
-)]
+#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, reason = "tests")]
 mod tests;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use praxis_filter::{
-    FilterAction, FilterError, HttpFilter, HttpFilterContext, Rejection,
-    parse_filter_config,
-};
+use praxis_filter::{FilterAction, FilterError, HttpFilter, HttpFilterContext, Rejection, parse_filter_config};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -121,18 +115,14 @@ impl ApiKeyAuthFilter {
     /// # Errors
     ///
     /// Returns [`FilterError`] if config parsing or validation fails.
-    pub fn from_config(
-        value: &serde_yaml::Value,
-    ) -> Result<Box<dyn HttpFilter>, FilterError> {
+    pub fn from_config(value: &serde_yaml::Value) -> Result<Box<dyn HttpFilter>, FilterError> {
         let cfg: ApiKeyAuthConfig = parse_filter_config("api_key_auth", value)?;
         validate_config(&cfg).map_err(|e| -> FilterError { e.into() })?;
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(cfg.timeout_seconds))
             .build()
-            .map_err(|e| -> FilterError {
-                format!("api_key_auth: failed to build HTTP client: {e}").into()
-            })?;
+            .map_err(|e| -> FilterError { format!("api_key_auth: failed to build HTTP client: {e}").into() })?;
 
         Ok(Box::new(Self {
             client,
@@ -172,12 +162,7 @@ impl ApiKeyAuthFilter {
     async fn validate_key(&self, key: &str) -> Option<CachedIdentity> {
         let body = serde_json::json!({"key": key});
 
-        let resp = self.client
-            .post(&self.validate_url)
-            .json(&body)
-            .send()
-            .await
-            .ok()?;
+        let resp = self.client.post(&self.validate_url).json(&body).send().await.ok()?;
 
         if !resp.status().is_success() {
             debug!(status = %resp.status(), "validation endpoint error");
@@ -207,10 +192,7 @@ impl HttpFilter for ApiKeyAuthFilter {
     }
 
     #[expect(clippy::too_many_lines, reason = "auth flow with cache + callout + metadata write")]
-    async fn on_request(
-        &self,
-        ctx: &mut HttpFilterContext<'_>,
-    ) -> Result<FilterAction, FilterError> {
+    async fn on_request(&self, ctx: &mut HttpFilterContext<'_>) -> Result<FilterAction, FilterError> {
         // 1. Extract the API key.
         let Some(key_value) = ctx.request.headers.get(&*self.token_header) else {
             debug!("no API key header found");
