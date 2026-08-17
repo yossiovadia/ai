@@ -110,6 +110,11 @@ data:
       <tr><td><a href="https://github.com/praxis-proxy/ai/issues/712">#712</a></td><td>model access control (allowlist/denylist)</td><td>Issue</td><td><span class="badge open">needs triage</span></td></tr>
       <tr><td><a href="https://github.com/praxis-proxy/ai/issues/600">#600</a></td><td>llm-katan multi-provider test backend</td><td>Issue</td><td><span class="badge open">needs triage</span></td></tr>
       <tr><td><a href="https://github.com/praxis-proxy/ai/pull/601">#601</a></td><td>Anthropic SDK integration tests</td><td>PR</td><td><span class="badge blocked">blocked</span></td></tr>
+      <tr><td colspan="4" style="padding:8px 0 4px;font-size:12px;color:var(--text2);font-weight:600">Noy Itzikowitz (noyitz)</td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/577">#577</a></td><td>external metering filter — usage reporting &amp; balance checks</td><td>Issue</td><td><span class="badge done">accepted</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/pull/581">#581</a></td><td>external metering filter with identity header handling</td><td>PR</td><td><span class="badge open">awaiting review</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/pull/582">#582</a></td><td>token_count: report prompt cache token breakdown</td><td>PR</td><td><span class="badge open">awaiting review</span></td></tr>
+      <tr><td><a href="https://github.com/praxis-proxy/ai/issues/583">#583</a></td><td>bug: token_usage_headers injects no headers for body-derived counts</td><td>Issue</td><td><span class="badge open">open</span></td></tr>
     </table>
 
     <!-- ============================================================ -->
