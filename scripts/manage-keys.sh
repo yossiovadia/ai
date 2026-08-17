@@ -145,8 +145,15 @@ list)
 
     echo "$RESPONSE" | python3 -c "
 import sys, json
-data = json.load(sys.stdin)
-keys = [k for k in data.get('data', []) if k['status'] == 'active']
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, ValueError):
+    print('No keys found.')
+    sys.exit(0)
+if data is None or not isinstance(data, dict):
+    print('No keys found.')
+    sys.exit(0)
+keys = [k for k in (data.get('data') or []) if k.get('status') == 'active']
 if not keys:
     print('No keys found.')
     sys.exit(0)
@@ -179,7 +186,7 @@ revoke)
     KEYS=$(echo "$RESPONSE" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-for k in data.get('data', []):
+for k in (data.get('data') or []):
     if k['status'] != 'active':
         continue
     print(k['id'] + '|' + k['name'])
