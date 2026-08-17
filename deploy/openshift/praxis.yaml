@@ -37,6 +37,16 @@ data:
             cache_ttl_seconds: 300
             timeout_seconds: 5
 
+          - filter: model_access
+            mode: denylist
+            models:
+              - "claude-fable-*"
+            overrides:
+              - groups: ["dogfood-testing"]
+                mode: allowlist
+                models: ["*"]
+            group_metadata_key: "x-tenant-group"
+
           - filter: identity_header_guard
             prefix: "x-tenant-"
 
@@ -88,6 +98,16 @@ data:
             token_header: "authorization"
             cache_ttl_seconds: 300
             timeout_seconds: 5
+
+          - filter: model_access
+            mode: denylist
+            models:
+              - "claude-fable-*"
+            overrides:
+              - groups: ["dogfood-testing"]
+                mode: allowlist
+                models: ["*"]
+            group_metadata_key: "x-tenant-group"
 
           - filter: identity_header_guard
             prefix: "x-tenant-"

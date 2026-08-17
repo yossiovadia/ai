@@ -6,7 +6,10 @@
 use http::{HeaderValue, Method};
 use praxis_filter::FilterAction;
 use serde_json::json;
-use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+};
 
 use crate::test_utils::{make_filter_context, make_request};
 
@@ -59,15 +62,13 @@ async fn valid_key_passes_and_writes_metadata() {
         .mount(&server)
         .await;
 
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!(
-        r#"validate_url: "{}/validate""#,
-        server.uri()
-    ))
-    .unwrap();
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&format!(r#"validate_url: "{}/validate""#, server.uri())).unwrap();
     let filter = super::ApiKeyAuthFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/messages");
-    req.headers.insert("x-api-key", HeaderValue::from_static("sk-oai-test123"));
+    req.headers
+        .insert("x-api-key", HeaderValue::from_static("sk-oai-test123"));
 
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();
@@ -102,11 +103,8 @@ async fn invalid_key_rejected() {
         .mount(&server)
         .await;
 
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!(
-        r#"validate_url: "{}/validate""#,
-        server.uri()
-    ))
-    .unwrap();
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&format!(r#"validate_url: "{}/validate""#, server.uri())).unwrap();
     let filter = super::ApiKeyAuthFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/messages");
@@ -115,24 +113,27 @@ async fn invalid_key_rejected() {
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();
 
-    assert!(matches!(action, FilterAction::Reject(_)), "invalid key should be rejected");
+    assert!(
+        matches!(action, FilterAction::Reject(_)),
+        "invalid key should be rejected"
+    );
 }
 
 #[tokio::test]
 async fn missing_key_rejected() {
     let server = MockServer::start().await;
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!(
-        r#"validate_url: "{}/validate""#,
-        server.uri()
-    ))
-    .unwrap();
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&format!(r#"validate_url: "{}/validate""#, server.uri())).unwrap();
     let filter = super::ApiKeyAuthFilter::from_config(&yaml).unwrap();
 
     let req = make_request(Method::POST, "/v1/messages");
     let mut ctx = make_filter_context(&req);
     let action = filter.on_request(&mut ctx).await.unwrap();
 
-    assert!(matches!(action, FilterAction::Reject(_)), "missing key should be rejected");
+    assert!(
+        matches!(action, FilterAction::Reject(_)),
+        "missing key should be rejected"
+    );
 }
 
 #[tokio::test]
@@ -149,23 +150,22 @@ async fn cache_hit_skips_callout() {
         .mount(&server)
         .await;
 
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!(
-        r#"validate_url: "{}/validate""#,
-        server.uri()
-    ))
-    .unwrap();
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&format!(r#"validate_url: "{}/validate""#, server.uri())).unwrap();
     let filter = super::ApiKeyAuthFilter::from_config(&yaml).unwrap();
 
     // First request — cache miss, calls endpoint.
     let mut req1 = make_request(Method::POST, "/v1/messages");
-    req1.headers.insert("x-api-key", HeaderValue::from_static("sk-oai-cached"));
+    req1.headers
+        .insert("x-api-key", HeaderValue::from_static("sk-oai-cached"));
     let mut ctx1 = make_filter_context(&req1);
     let _action = filter.on_request(&mut ctx1).await.unwrap();
     drop(_action);
 
     // Second request — cache hit, no callout.
     let mut req2 = make_request(Method::POST, "/v1/messages");
-    req2.headers.insert("x-api-key", HeaderValue::from_static("sk-oai-cached"));
+    req2.headers
+        .insert("x-api-key", HeaderValue::from_static("sk-oai-cached"));
     let mut ctx2 = make_filter_context(&req2);
     let action = filter.on_request(&mut ctx2).await.unwrap();
 
@@ -191,15 +191,13 @@ async fn key_header_stripped_from_upstream() {
         .mount(&server)
         .await;
 
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!(
-        r#"validate_url: "{}/validate""#,
-        server.uri()
-    ))
-    .unwrap();
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&format!(r#"validate_url: "{}/validate""#, server.uri())).unwrap();
     let filter = super::ApiKeyAuthFilter::from_config(&yaml).unwrap();
 
     let mut req = make_request(Method::POST, "/v1/messages");
-    req.headers.insert("x-api-key", HeaderValue::from_static("sk-oai-strip"));
+    req.headers
+        .insert("x-api-key", HeaderValue::from_static("sk-oai-strip"));
 
     let mut ctx = make_filter_context(&req);
     let _action = filter.on_request(&mut ctx).await.unwrap();
