@@ -733,7 +733,7 @@ async function load() {
 }
 
 async function loadJSON() {
-  const urls = ['/pipeline', 'pipeline-fixture.json'];
+  const urls = ['/pipeline/data', '/pipeline', 'pipeline-fixture.json'];
   for (const url of urls) {
     try {
       const resp = await fetch(url);
@@ -776,6 +776,7 @@ function buildFilterConfigs() {
 }
 
 function getFilterConfig(filter) {
+  if (filter.config) return filter.config;
   return filterConfigs[filter.chain + ':' + filter.chain_index] || {};
 }
 

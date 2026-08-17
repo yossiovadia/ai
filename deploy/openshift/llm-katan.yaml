@@ -26,7 +26,7 @@ spec:
             - "--port=8000"
             - "--ttft-ms=800"
             - "--itl-ms=15"
-            - "--error-rate=0.02"
+            - "--error-rate=0"
             - "--max-concurrent=100"
             - "--disable-dashboard"
           env:
