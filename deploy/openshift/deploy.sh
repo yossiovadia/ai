@@ -90,6 +90,29 @@ oc -n "$NAMESPACE" rollout status deployment/praxis --timeout=120s
 echo "Creating routes..."
 oc apply -f "$SCRIPT_DIR/routes.yaml"
 
+# ── Router ALB idle timeout (IBM Cloud VPC) ───────────────────
+# The VPC ALB fronting the OpenShift router defaults to a 50s idle-
+# connection timeout and RSTs any turn that stays silent longer — namely
+# cold-prompt-cache turns where Anthropic is quiet >50s during prefill.
+# The routes' 300s haproxy timeout fixes the router hop but not the ALB
+# in front of it, so bump the ALB to 600s. Inert on non-VPC clusters
+# (unknown annotation is ignored), so applied unconditionally. Needs
+# cluster-admin on openshift-ingress; if RBAC denies it, warn and keep
+# going — the gateway works without it, just with cold-turn resets.
+# Full story: docs/dogfood-tracker.md → "Ops Findings".
+
+echo "Setting router ALB idle timeout (VPC)..."
+if ! oc annotate --overwrite svc router-default -n openshift-ingress \
+    "service.kubernetes.io/ibm-load-balancer-cloud-provider-vpc-idle-connection-timeout=600"; then
+    echo ""
+    echo "WARNING: could not annotate svc/router-default (needs cluster-admin on openshift-ingress)."
+    echo "         The gateway will work, but cold-prompt-cache turns may hit ECONNRESET at ~50s."
+    echo "         Apply manually with a cluster-admin account:"
+    echo "           oc annotate --overwrite svc router-default -n openshift-ingress \\"
+    echo "             service.kubernetes.io/ibm-load-balancer-cloud-provider-vpc-idle-connection-timeout=600"
+    echo ""
+fi
+
 # ── Print connection info ─────────────────────────────────────
 
 ANTHROPIC_ROUTE=$(oc -n "$NAMESPACE" get route ai-gateway-anthropic -o jsonpath='{.spec.host}')
