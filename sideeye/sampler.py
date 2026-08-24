@@ -26,12 +26,11 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from sideeye.adapters.codex_rollout import parse_rollout  # noqa: E402
+from sideeye.adapters import load_transcript, session_files  # noqa: E402
 from sideeye.judge.judge import DEFAULT_MODEL, judge_session, load_rubric, rubric_version  # noqa: E402
 from sideeye.record import session_verdict_record  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent
-DEFAULT_ROLLOUT_DIR = pathlib.Path.home() / ".codex" / "sessions"
 DEFAULT_RUBRIC = REPO / "rubric" / "rubric_session_v1.md"
 DEFAULT_OUT = REPO / "verdicts" / "sampled.jsonl"
 
@@ -61,7 +60,8 @@ def sampled_in(session_id, rate):
 
 def main():
     ap = argparse.ArgumentParser(description="Side-Eye sampler (random stream)")
-    ap.add_argument("--rollout-dir", default=str(DEFAULT_ROLLOUT_DIR))
+    ap.add_argument("--client", choices=("claude", "codex"), default="claude",
+                    help="which client's sessions to sample (default claude)")
     ap.add_argument("--idle-min", type=float, default=10.0, help="minutes idle => session done")
     ap.add_argument("--sample-rate", type=float, default=1.0, help="0..1 (POC: 1.0)")
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC))
@@ -83,16 +83,16 @@ def main():
     seen = already_judged(out_path)
 
     cutoff = time.time() - args.idle_min * 60
-    rollouts = sorted(pathlib.Path(args.rollout_dir).rglob("rollout-*.jsonl"))
+    rollouts = session_files(args.client)
     done = [p for p in rollouts if p.stat().st_mtime < cutoff]
 
-    print(f"{len(rollouts)} rollouts, {len(done)} idle>{args.idle_min}min, "
+    print(f"{len(rollouts)} {args.client} sessions, {len(done)} idle>{args.idle_min}min, "
           f"{len(seen)} already judged. Judging new sessions...\n")
 
     judged = 0
     with open(out_path, "a", encoding="utf-8") as out:
         for path in done:
-            transcript = parse_rollout(path)
+            transcript = load_transcript(path)
             if transcript is None:
                 continue
             sid = transcript["session_id"]
