@@ -3,3 +3,6 @@ verdicts/
 # Never commit anything resembling a key.
 *.key
 .env
+
+# Codex isolated runtime home (session logs, blocked path)
+live/codex-home/

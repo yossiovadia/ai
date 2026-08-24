@@ -1,0 +1,109 @@
+# Side-Eye POC — local praxis gateway in front of GLM-5.2.
+#
+# Two doors to the same free GLM upstream:
+#   - openai   listener :8180  (/v1/chat/completions) — for OpenAI-chat clients
+#                               (Codex is blocked: it now speaks only the
+#                               Responses API, which GLM doesn't serve).
+#   - anthropic listener :8181 (/v1/messages) — for Claude Code. GLM's LiteLLM
+#                               serves the Anthropic Messages API natively, so
+#                               NO API translation is needed. Set Claude Code's
+#                               model env to the GLM string so no model rewrite
+#                               is needed either.
+#
+# Both meter to the local stack (:9090) so GLM usage shows at $0. Upstream is
+# reached via the local CONNECT tunnel (127.0.0.1:18443) with TLS/SNI to the
+# real host. No gateway auth — localhost only. Identity is a static
+# default_username (single-user POC). The real GLM key is injected server-side
+# (LITELLM_API_KEY in praxis's env); clients send a placeholder.
+
+listeners:
+  - name: openai
+    address: "127.0.0.1:8180"
+    filter_chains:
+      - openai-main
+  - name: anthropic
+    address: "127.0.0.1:8181"
+    filter_chains:
+      - anthropic-main
+
+filter_chains:
+  # ---- OpenAI chat door (/v1/chat/completions) --------------------------
+  - name: openai-main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: glm
+      - filter: external_metering
+        metering_url: "http://127.0.0.1:9090"
+        timeout_seconds: 5
+        feature_key: "inference-tokens"
+        source: "sideeye-glm"
+        fail_open: true
+        identity_header_prefix: "x-tenant-"
+        default_username: "yossi"
+        default_model: "rits/zai-org/glm-5-2-fp8"
+      - filter: token_count
+        provider: openai
+      - filter: token_usage_headers
+      - filter: credential_injection
+        clusters:
+          - name: glm
+            header: Authorization
+            header_prefix: "Bearer "
+            env_var: LITELLM_API_KEY
+            strip_client_credential: true
+      - filter: headers
+        request_set:
+          - name: "Host"
+            value: "ete-litellm.ai-models.vpc.res.ibm.com"
+      - filter: load_balancer
+        clusters:
+          - name: glm
+            tls:
+              sni: "ete-litellm.ai-models.vpc.res.ibm.com"
+            idle_timeout_ms: 45000
+            endpoints:
+              - "127.0.0.1:18443"
+
+  # ---- Anthropic Messages door (/v1/messages) — Claude Code -------------
+  - name: anthropic-main
+    filters:
+      - filter: router
+        routes:
+          - path_prefix: "/"
+            cluster: glm
+      - filter: external_metering
+        metering_url: "http://127.0.0.1:9090"
+        timeout_seconds: 5
+        feature_key: "inference-tokens"
+        source: "sideeye-glm"
+        fail_open: true
+        identity_header_prefix: "x-tenant-"
+        default_username: "yossi"
+        default_model: "rits/zai-org/glm-5-2-fp8"
+      - filter: token_count
+        provider: anthropic
+      - filter: token_usage_headers
+      # Inject the real GLM key as x-api-key (LiteLLM accepts it on
+      # /v1/messages), stripping the client's placeholder key.
+      - filter: credential_injection
+        clusters:
+          - name: glm
+            header: x-api-key
+            env_var: LITELLM_API_KEY
+            strip_client_credential: true
+      - filter: headers
+        request_set:
+          - name: "Host"
+            value: "ete-litellm.ai-models.vpc.res.ibm.com"
+          - name: "anthropic-version"
+            value: "2023-06-01"
+      - filter: load_balancer
+        clusters:
+          - name: glm
+            tls:
+              sni: "ete-litellm.ai-models.vpc.res.ibm.com"
+            idle_timeout_ms: 45000
+            endpoints:
+              - "127.0.0.1:18443"

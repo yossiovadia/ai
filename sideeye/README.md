@@ -83,13 +83,35 @@ The whole pipeline (capture → judge → verdict → cost) is verified end-to-e
 real Codex rollouts. The judge routes through the dogfood Anthropic route, so
 judge spend is metered on the dashboard.
 
-## Deferred: live GLM plumbing (needs VPN)
+## Live GLM plumbing (`sideeye/live/`, needs VPN)
 
-Only the live wiring waits for a "start on GLM" session: the CONNECT tunnel
-(Python glue exposing GLM as localhost), the local praxis GLM config, the
-all-zeros GLM pricing row (so GLM shows at $0), and the Codex provider profile.
-Once those run, real Codex→praxis→GLM sessions flow into the exact pipeline above
-and the cost report fills with real numbers.
+Bring the whole stack up idempotently, then point Claude Code at GLM:
+
+```bash
+./sideeye/live/setup.sh          # tunnel + metering(:9090) + praxis(:8180/:8181)
+./sideeye/live/run-claude-glm.sh # Claude Code -> praxis -> GLM (new terminal)
+```
+
+- **Client: Claude Code** (`anthropic` listener :8181). GLM's LiteLLM serves the
+  Anthropic Messages API natively — verified end-to-end including **tool-use** —
+  so no API translation is needed. `run-claude-glm.sh` sets the model env to the
+  exact GLM string, so no model rewrite is needed either. Traffic is metered
+  locally at **$0** (`http://127.0.0.1:9090/dashboard`).
+- **Codex is blocked**: Codex ≥0.142 speaks only the Responses API, which GLM
+  doesn't serve; praxis has the Responses→chat translation logic but it isn't
+  wired into a filter. The `openai` listener (:8180) works for any OpenAI-chat
+  client. Unblocking Codex = wire that translation into a filter (`apis/`, Rust).
+- **Tunnel**: `glm_tunnel.py` — temporary CONNECT glue exposing GLM as
+  `127.0.0.1:18443` (praxis has no forward-proxy egress). Production capture is
+  gateway-side; this is laptop-only scaffolding.
+
+Then judge and report:
+
+```bash
+python -m sideeye.escalate                 # review the latest Claude Code session
+python -m sideeye.sampler --client claude  # background random-sample judging
+python -m sideeye.cost_report --html sideeye/verdicts/cost-report.html
+```
 
 ## Rules honored
 

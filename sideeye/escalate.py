@@ -33,12 +33,11 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from sideeye.adapters.codex_rollout import parse_rollout  # noqa: E402
+from sideeye.adapters import latest_session, load_transcript  # noqa: E402
 from sideeye.judge.judge import judge_session, load_rubric, rubric_version  # noqa: E402
 from sideeye.record import session_verdict_record  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent
-DEFAULT_ROLLOUT_DIR = pathlib.Path.home() / ".codex" / "sessions"
 DEFAULT_RUBRIC = REPO / "rubric" / "rubric_session_v1.md"
 DEFAULT_OUT = REPO / "verdicts" / "escalated.jsonl"
 ESCALATION_MODEL = "claude-opus-4-8"  # stronger by default
@@ -49,16 +48,11 @@ def fail(msg):
     sys.exit(1)
 
 
-def latest_rollout(rollout_dir):
-    rollouts = sorted(pathlib.Path(rollout_dir).rglob("rollout-*.jsonl"),
-                      key=lambda p: p.stat().st_mtime)
-    return rollouts[-1] if rollouts else None
-
-
 def main():
     ap = argparse.ArgumentParser(description="Side-Eye on-demand escalation (human stream)")
-    ap.add_argument("--rollout", default=None, help="rollout file (default: latest)")
-    ap.add_argument("--rollout-dir", default=str(DEFAULT_ROLLOUT_DIR))
+    ap.add_argument("--rollout", default=None, help="session file (default: latest for --client)")
+    ap.add_argument("--client", choices=("claude", "codex"), default="claude",
+                    help="which client's latest session to escalate (default claude)")
     ap.add_argument("--tier", type=int, choices=(1, 2), default=1)
     ap.add_argument("--model", default=ESCALATION_MODEL)
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC))
@@ -78,10 +72,10 @@ def main():
     if not api_key:
         fail("ANTHROPIC_API_KEY not set")
 
-    rollout = pathlib.Path(args.rollout) if args.rollout else latest_rollout(args.rollout_dir)
+    rollout = pathlib.Path(args.rollout) if args.rollout else latest_session(args.client)
     if not rollout or not rollout.exists():
-        fail(f"no rollout found (dir: {args.rollout_dir})")
-    transcript = parse_rollout(rollout)
+        fail(f"no {args.client} session found")
+    transcript = load_transcript(rollout)
     if transcript is None:
         fail(f"no usable turns in {rollout}")
 

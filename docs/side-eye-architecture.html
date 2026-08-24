@@ -100,7 +100,7 @@
   <div class="phases">
     <span class="phase p-done"><b>Phase A</b> — facts ✓ 2026-08-21 · local branch confirmed (cluster→GLM unreachable, control-verified)</span>
     <span class="phase p-done"><b>Phase B</b> — judge POC ✓ 2026-08-23 · Sonnet 5 judge live; 2/2 planted defects caught, 0 false positives (clean control pending VPN)</span>
-    <span class="phase"><b>Phase C</b> — capture (praxis) or on-demand tool (MCP) — decision pending</span>
+    <span class="phase p-done"><b>Phase C</b> — live ✓ 2026-08-24 · Claude Code → praxis → GLM ($0 metered), capture via client transcripts, escalate + cost report working; Codex blocked (Responses-only)</span>
     <span class="phase"><b>Phase D</b> — verdict report</span>
   </div>
 
@@ -327,11 +327,12 @@
     a filter.</figcaption>
   </figure>
 
-  <p class="updated">Last updated 2026-08-23 (Phase B preview: Sonnet 5 judge live through the dogfood route,
-  structured output via forced tool call, caught both planted defects at $0.01/pair — full gate B pending
-  VPN for the clean-answer control; real model id
-  <span style="font-family:ui-monospace,monospace">rits/zai-org/glm-5-2-fp8</span>; /v1/messages enabled;
-  MCP-tool candidate added, decision pending) · maintained alongside the Side-Eye POC (update phase chips
+  <p class="updated">Last updated 2026-08-24 (Phase C live: Claude Code → local praxis (:8181) → GLM over a
+  CONNECT tunnel, metered locally at $0; GLM serves the Anthropic Messages API natively incl. tool-use, so
+  no translation/model-rewrite needed. Capture via client transcripts (Codex + Claude Code adapters);
+  escalate (human stream) + sampler (random stream) + cost report all working. Codex blocked: it now speaks
+  only the Responses API, which GLM doesn't serve and praxis doesn't yet translate. Model id
+  <span style="font-family:ui-monospace,monospace">rits/zai-org/glm-5-2-fp8</span>) · maintained alongside the Side-Eye POC (update phase chips
   and figures at every phase gate) · siblings: <span style="font-family:ui-monospace,monospace">judge-sampling-pitch.md</span>,
   <span style="font-family:ui-monospace,monospace">benchmark-results.md</span>, Noy's
   <span style="font-family:ui-monospace,monospace">praxis-upstream-status.html</span></p>
