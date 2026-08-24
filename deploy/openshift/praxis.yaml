@@ -89,6 +89,10 @@ data:
               - name: anthropic
                 tls:
                   sni: "api.anthropic.com"
+                # Evict pooled upstream connections before the provider's
+                # ~60s keepalive kill — stale conns hang requests until the
+                # route timeout (see docs/dogfood-tracker.md, Ops Findings).
+                idle_timeout_ms: 45000
                 endpoints:
                   - "api.anthropic.com:443"
 
@@ -151,6 +155,8 @@ data:
               - name: openai
                 tls:
                   sni: "api.openai.com"
+                # Same stale-connection guard as the anthropic cluster.
+                idle_timeout_ms: 45000
                 endpoints:
                   - "api.openai.com:443"
 
