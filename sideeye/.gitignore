@@ -1,0 +1,5 @@
+# Judge output is regenerated each run — evidence, not source.
+verdicts/*.jsonl
+# Never commit anything resembling a key.
+*.key
+.env

@@ -1,0 +1,338 @@
+<!-- Side-Eye architecture — living diagram. MAINTENANCE CONTRACT for the POC
+     session: update the phase chips + "Last updated" line at every phase gate,
+     and redraw the affected figure if the architecture branch changes (e.g.
+     Phase A finds the dogfood cluster CAN reach the LiteLLM host — then
+     Figure 1 collapses into Figure 2). Keep this file self-contained: no
+     external assets, no scripts. -->
+<title>Side-Eye Architecture</title>
+<style>
+  :root {
+    --bg: #f4f7f5;
+    --panel: #ffffff;
+    --ink: #1f2823;
+    --muted: #5c6c64;
+    --line: #d3ddd6;
+    --band: #e9efeb;
+    --eye: #0d7f72;      /* the Side-Eye judge loop */
+    --glm: #6353c4;      /* the GLM (free-model) arm */
+    --ext: #1f6fb2;      /* external providers / hosts */
+    --glue: #b34a28;     /* temporary VPN glue */
+    --chip-eye: #e0f0ed;
+    --chip-glm: #e9e5f9;
+    --chip-glue: #f7e2d9;
+    --chip-next: #f3ead4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141a17; --panel: #1b231f; --ink: #e3eae5; --muted: #93a49a;
+      --line: #33403a; --band: #212b26;
+      --eye: #3fc2ad; --glm: #a89af5; --ext: #64a8e0; --glue: #e8825c;
+      --chip-eye: #16362f; --chip-glm: #292347; --chip-glue: #3c2118;
+      --chip-next: #3a2e12;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141a17; --panel: #1b231f; --ink: #e3eae5; --muted: #93a49a;
+    --line: #33403a; --band: #212b26;
+    --eye: #3fc2ad; --glm: #a89af5; --ext: #64a8e0; --glue: #e8825c;
+    --chip-eye: #16362f; --chip-glm: #292347; --chip-glue: #3c2118;
+    --chip-next: #3a2e12;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 40px 24px 72px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 26px; max-width: 72ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 0 0 28px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+  .sw-eye { background: var(--eye); } .sw-glm { background: var(--glm); }
+  .sw-ext { background: var(--ext); } .sw-glue { background: var(--glue); }
+  .sw-future { border: 1.5px dashed var(--muted); background: transparent; }
+  figure {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    margin: 0 0 30px; padding: 18px 18px 8px; overflow-x: auto;
+  }
+  figure svg { display: block; min-width: 980px; width: 100%; height: auto; }
+  figcaption { color: var(--muted); font-size: 13.5px; padding: 10px 6px 10px; max-width: 100ch; }
+  .phases { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 10px; }
+  .phase {
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 14px;
+    font-size: 13px; background: var(--band);
+  }
+  .phase b { font-weight: 600; }
+  .p-next { background: var(--chip-next); }
+  .p-done { background: var(--chip-eye); }
+  .updated { color: var(--muted); font-size: 12.5px; margin-top: 18px; }
+  /* SVG text roles */
+  svg text { fill: var(--ink); font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12.5px; }
+  svg .cap { fill: var(--muted); font-size: 11px; letter-spacing: 0.09em; font-weight: 600; }
+  svg .small { fill: var(--muted); font-size: 11px; }
+  svg .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; }
+  svg .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; rx: 8; }
+  svg .b-eye { stroke: var(--eye); } svg .b-glm { stroke: var(--glm); }
+  svg .b-ext { stroke: var(--ext); } svg .b-glue { stroke: var(--glue); }
+  svg .edge { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+  svg .e-eye { stroke: var(--eye); } svg .e-glm { stroke: var(--glm); }
+  svg .e-glue { stroke: var(--glue); }
+  svg .boundary { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 6 5; }
+  svg .future { fill: none; stroke: var(--muted); stroke-width: 1.4; stroke-dasharray: 5 5; }
+</style>
+
+<main>
+  <h1>Side-Eye Architecture</h1>
+  <p class="sub">Judge sampling for the AI gateway: a cheap "free" model does the drafting,
+  an expensive model grades a sample of the finished work — out of band, never on the
+  request path. Design: <span class="mono" style="font-family:ui-monospace,monospace">docs/judge-sampling-pitch.md</span> ·
+  evidence: <span class="mono" style="font-family:ui-monospace,monospace">docs/benchmark-results.md</span>.</p>
+
+  <div class="legend">
+    <span><i class="swatch sw-glm"></i> GLM arm (the free drafting model)</span>
+    <span><i class="swatch sw-eye"></i> Side-Eye judge loop (async)</span>
+    <span><i class="swatch sw-ext"></i> external provider / host</span>
+    <span><i class="swatch sw-glue"></i> temporary VPN glue</span>
+    <span><i class="swatch sw-future"></i> future (not in POC)</span>
+  </div>
+
+  <div class="phases">
+    <span class="phase p-done"><b>Phase A</b> — facts ✓ 2026-08-21 · local branch confirmed (cluster→GLM unreachable, control-verified)</span>
+    <span class="phase p-done"><b>Phase B</b> — judge POC ✓ 2026-08-23 · Sonnet 5 judge live; 2/2 planted defects caught, 0 false positives (clean control pending VPN)</span>
+    <span class="phase"><b>Phase C</b> — capture (praxis) or on-demand tool (MCP) — decision pending</span>
+    <span class="phase"><b>Phase D</b> — verdict report</span>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 1440 620" role="img"
+         aria-label="Current POC: Codex talks to a local praxis on the laptop, which reaches GLM through a CONNECT tunnel over the Red Hat VPN; praxis meters tokens at zero dollars and stores sessions; a sampler sends finished sessions to a Sonnet 5 judge through the dogfood gateway, producing verdicts.">
+      <defs>
+        <marker id="a-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker>
+        <marker id="a-eye" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--eye)"/></marker>
+        <marker id="a-glm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--glm)"/></marker>
+        <marker id="a-glue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--glue)"/></marker>
+      </defs>
+
+      <text x="24" y="34" class="cap">NOW — POC: VPN-BOUND, PRAXIS RUNS ON THE LAPTOP</text>
+
+      <!-- laptop boundary -->
+      <rect x="24" y="52" width="850" height="540" class="boundary"/>
+      <text x="40" y="76" class="cap">YOSSI'S LAPTOP — RED HAT VPN</text>
+
+      <!-- drafting lane -->
+      <rect x="48" y="110" width="150" height="76" class="box b-glm"/>
+      <text x="123" y="136" text-anchor="middle">Codex</text>
+      <text x="123" y="154" text-anchor="middle" class="mono" style="font-size:9px">rits/zai-org/glm-5-2-fp8</text>
+      <text x="123" y="170" text-anchor="middle" class="small">wire_api: chat · include_usage!</text>
+
+      <path d="M198,148 L268,148" class="edge e-glm" marker-end="url(#a-glm)"/>
+      <text x="233" y="138" text-anchor="middle" class="small">OpenAI chat</text>
+
+      <rect x="270" y="96" width="230" height="128" class="box b-glm"/>
+      <text x="385" y="122" text-anchor="middle">praxis (local gateway)</text>
+      <text x="385" y="142" text-anchor="middle" class="mono">:8081 OpenAI listener</text>
+      <text x="385" y="163" text-anchor="middle" class="small">model routing · token_count</text>
+      <text x="385" y="180" text-anchor="middle" class="small">metering · response store</text>
+      <text x="385" y="205" text-anchor="middle" class="small">GLM pricing row = $0 · idle_timeout_ms 45s</text>
+
+      <path d="M500,148 L568,148" class="edge e-glue" marker-end="url(#a-glue)"/>
+
+      <rect x="570" y="110" width="170" height="86" class="box b-glue"/>
+      <text x="655" y="136" text-anchor="middle">proxytunnel</text>
+      <text x="655" y="155" text-anchor="middle" class="mono">CONNECT 10.2.32.57:3128</text>
+      <text x="655" y="174" text-anchor="middle" class="small" fill="var(--glue)">temporary VPN glue</text>
+
+      <path d="M740,148 L948,148" class="edge e-glue" marker-end="url(#a-glue)"/>
+      <text x="845" y="138" text-anchor="middle" class="small">crosses the VPN boundary</text>
+
+      <rect x="950" y="102" width="220" height="92" class="box b-ext"/>
+      <text x="1060" y="126" text-anchor="middle">LiteLLM</text>
+      <text x="1060" y="144" text-anchor="middle" class="mono" style="font-size:10.5px">ete-litellm.ai-models.vpc.res.ibm.com</text>
+      <text x="1060" y="161" text-anchor="middle" class="small">IBM Research VPC · temp key</text>
+      <text x="1060" y="178" text-anchor="middle" class="small">/v1/messages enabled → Claude Code viable</text>
+
+      <path d="M1170,148 L1238,148" class="edge" marker-end="url(#a-ink)"/>
+      <rect x="1240" y="110" width="160" height="76" class="box b-ext"/>
+      <text x="1320" y="140" text-anchor="middle">GLM-5.2-FP8</text>
+      <text x="1320" y="158" text-anchor="middle" class="small">drafts for free</text>
+
+      <!-- metering side flow -->
+      <path d="M320,224 L320,300" class="edge" marker-end="url(#a-ink)"/>
+      <text x="330" y="266" class="small">usage events (tokens, $0)</text>
+      <rect x="48" y="302" width="220" height="80" class="box"/>
+      <text x="158" y="330" text-anchor="middle">local metering + dashboard</text>
+      <text x="158" y="349" text-anchor="middle" class="small">tokens counted · cost shows $0.00</text>
+      <text x="158" y="366" text-anchor="middle" class="small">same stack as the dogfood</text>
+      <path d="M310,340 L270,340" class="edge" marker-end="url(#a-ink)"/>
+      <rect x="312" y="302" width="8" height="0" fill="none"/>
+
+      <!-- side-eye loop -->
+      <path d="M430,224 L430,300" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <text x="440" y="266" class="small">stored sessions</text>
+      <rect x="330" y="302" width="230" height="96" class="box b-eye"/>
+      <text x="445" y="328" text-anchor="middle">Side-Eye sampler</text>
+      <text x="445" y="347" text-anchor="middle" class="small">polls the response store</text>
+      <text x="445" y="364" text-anchor="middle" class="small">session idle ≥ 10 min → judge it</text>
+      <text x="445" y="381" text-anchor="middle" class="small">100% sampling at POC scale</text>
+
+      <path d="M560,350 L948,350" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <text x="754" y="340" text-anchor="middle" class="small">rubric v1 + session transcript · async, fire-and-forget</text>
+
+      <rect x="950" y="308" width="220" height="84" class="box"/>
+      <text x="1060" y="336" text-anchor="middle">dogfood gateway</text>
+      <text x="1060" y="355" text-anchor="middle" class="small">IBM Cloud · judge spend</text>
+      <text x="1060" y="372" text-anchor="middle" class="small">auto-metered as real cost</text>
+
+      <path d="M1170,350 L1238,350" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <rect x="1240" y="314" width="160" height="76" class="box b-eye"/>
+      <text x="1320" y="342" text-anchor="middle">claude-sonnet-5</text>
+      <text x="1320" y="360" text-anchor="middle" class="small">the judge · ~$0.30–0.50</text>
+      <text x="1320" y="376" text-anchor="middle" class="small">per session</text>
+
+      <path d="M1320,390 L1320,470 L700,470" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <text x="1010" y="460" text-anchor="middle" class="small">structured verdict {score, issues[], severity}</text>
+      <rect x="460" y="436" width="238" height="70" class="box b-eye"/>
+      <text x="579" y="464" text-anchor="middle" class="mono">verdicts.jsonl → report</text>
+      <text x="579" y="484" text-anchor="middle" class="small">avg score · issues · judge cost</text>
+
+      <text x="48" y="560" class="small">The judge never blocks a turn: drafting traffic and judging traffic are separate lanes that only meet in the verdicts file.</text>
+    </svg>
+    <figcaption><b>Now — the POC.</b> The GLM endpoint is reachable only over the Red Hat VPN through a
+    forward proxy, so praxis runs on the laptop: it routes Codex's GLM traffic through a CONNECT tunnel,
+    meters tokens at $0.00, and keeps sessions in its response store. A sampler judges finished sessions
+    through the dogfood gateway (Sonnet 5), so judge spend lands on the real dashboard. The tunnel and the
+    local stack exist <i>only</i> because of the VPN limitation — everything teal and purple survives
+    unchanged into the target.</figcaption>
+  </figure>
+
+  <figure>
+    <svg viewBox="0 0 1440 250" role="img"
+         aria-label="Candidate under consideration: an on-demand side-eye MCP review tool that any session invokes explicitly; the judge and verdict store are the same components as the sampler's, but the trigger is a human or agent, which makes the verdict sample biased.">
+      <text x="24" y="30" class="cap">CANDIDATE — ON-DEMAND REVIEW TOOL (MCP) · DECISION PENDING · SHARES THE JUDGE + STORE WITH BOTH FIGURES</text>
+
+      <rect x="24" y="52" width="1392" height="176" class="future" rx="10"/>
+
+      <rect x="60" y="90" width="200" height="84" class="box"/>
+      <text x="160" y="118" text-anchor="middle">Any session</text>
+      <text x="160" y="137" text-anchor="middle" class="small">Claude Code · Codex-on-GLM</text>
+      <text x="160" y="154" text-anchor="middle" class="small">invokes explicitly</text>
+
+      <path d="M260,132 L358,132" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <text x="309" y="122" text-anchor="middle" class="small">review(content)</text>
+
+      <rect x="360" y="90" width="230" height="84" class="box b-eye"/>
+      <text x="475" y="118" text-anchor="middle">side-eye MCP server</text>
+      <text x="475" y="137" text-anchor="middle" class="small">same judge module + rubric</text>
+      <text x="475" y="154" text-anchor="middle" class="small">as the sampler below</text>
+
+      <path d="M590,132 L688,132" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <rect x="690" y="90" width="230" height="84" class="box b-eye"/>
+      <text x="805" y="118" text-anchor="middle">judge via dogfood route</text>
+      <text x="805" y="137" text-anchor="middle" class="small">claude-sonnet-5 · metered</text>
+      <text x="805" y="154" text-anchor="middle" class="small">verdict returns to the session</text>
+
+      <path d="M920,132 L1018,132" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <rect x="1020" y="90" width="230" height="84" class="box"/>
+      <text x="1135" y="118" text-anchor="middle">verdict store</text>
+      <text x="1135" y="137" text-anchor="middle" class="small">score · issues · rubric version</text>
+      <text x="1135" y="154" text-anchor="middle" class="small">seeds the dataset below</text>
+
+      <text x="60" y="212" class="small">Trade-off, stated honestly: ships in ~a day and automates the manual workflow — but the trigger is a human/agent, so verdicts are a biased sample (asked-when-suspicious) and cannot produce the routing table. Complements the figures above; replaces neither.</text>
+    </svg>
+    <figcaption><b>Candidate — on-demand tool.</b> The pitch's "ships first" variant: one MCP tool callable
+    from any client, reusing the judge module and verdict store. Pending a go/no-go; if adopted it becomes
+    Phase C and the praxis capture pipeline is deferred (not deleted).</figcaption>
+  </figure>
+
+  <figure>
+    <svg viewBox="0 0 1440 540" role="img"
+         aria-label="Target: clients talk to the dogfood praxis gateway, which routes to Anthropic, OpenAI, and GLM as a third ordinary upstream; the gateway samples sessions to an async judge worker whose verdicts land in the metering database next to cost, with a future tier-2 agentic judge shown dashed.">
+      <text x="24" y="34" class="cap">TARGET — GLM IS JUST ANOTHER ENDPOINT; SIDE-EYE IS PART OF THE GATEWAY</text>
+
+      <rect x="24" y="90" width="180" height="96" class="box"/>
+      <text x="114" y="120" text-anchor="middle">Clients</text>
+      <text x="114" y="140" text-anchor="middle" class="small">Claude Code · Codex</text>
+      <text x="114" y="157" text-anchor="middle" class="small">any OpenAI/Anthropic SDK</text>
+
+      <path d="M204,138 L288,138" class="edge" marker-end="url(#a-ink)"/>
+
+      <rect x="290" y="76" width="280" height="150" class="box b-eye"/>
+      <text x="430" y="104" text-anchor="middle">praxis — dogfood gateway</text>
+      <text x="430" y="124" text-anchor="middle" class="small">IBM Cloud · one gateway for everyone</text>
+      <text x="430" y="147" text-anchor="middle" class="small">auth · routing · token_count · metering</text>
+      <text x="430" y="169" text-anchor="middle" class="mono" fill="var(--eye)">+ capture &amp; sampling (Side-Eye)</text>
+      <text x="430" y="192" text-anchor="middle" class="small">response store · session grouping</text>
+      <text x="430" y="209" text-anchor="middle" class="small">task-class stratified quality cells</text>
+
+      <path d="M570,110 L818,96" class="edge" marker-end="url(#a-ink)"/>
+      <path d="M570,140 L818,166" class="edge" marker-end="url(#a-ink)"/>
+      <path d="M570,180 L818,244" class="edge e-glm" marker-end="url(#a-glm)"/>
+
+      <rect x="820" y="70" width="210" height="56" class="box b-ext"/>
+      <text x="925" y="96" text-anchor="middle" class="mono">api.anthropic.com</text>
+      <text x="925" y="114" text-anchor="middle" class="small">frontier tier</text>
+
+      <rect x="820" y="140" width="210" height="56" class="box b-ext"/>
+      <text x="925" y="166" text-anchor="middle" class="mono">api.openai.com</text>
+      <text x="925" y="184" text-anchor="middle" class="small">existing upstream</text>
+
+      <rect x="820" y="212" width="210" height="70" class="box b-glm"/>
+      <text x="925" y="238" text-anchor="middle" class="mono">GLM endpoint</text>
+      <text x="925" y="256" text-anchor="middle" class="small" fill="var(--glm)">just another cluster —</text>
+      <text x="925" y="272" text-anchor="middle" class="small" fill="var(--glm)">the only routing change vs today</text>
+
+      <!-- side-eye loop -->
+      <path d="M430,226 L430,310" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <text x="440" y="274" class="small">sampled sessions (incl. revision turns)</text>
+
+      <rect x="300" y="312" width="260" height="96" class="box b-eye"/>
+      <text x="430" y="340" text-anchor="middle">judge worker (tier 0/1)</text>
+      <text x="430" y="360" text-anchor="middle" class="small">async · out of the request path</text>
+      <text x="430" y="377" text-anchor="middle" class="small">versioned rubric · claims vs. evidence</text>
+      <text x="430" y="394" text-anchor="middle" class="small">judge–human calibration tracked</text>
+
+      <path d="M560,360 L678,360" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <rect x="680" y="322" width="200" height="76" class="box b-eye"/>
+      <text x="780" y="350" text-anchor="middle">frontier judge model</text>
+      <text x="780" y="368" text-anchor="middle" class="small">called via the same gateway</text>
+      <text x="780" y="384" text-anchor="middle" class="small">→ judge spend is metered too</text>
+
+      <path d="M880,360 L998,360" class="edge e-eye" marker-end="url(#a-eye)"/>
+      <text x="939" y="350" text-anchor="middle" class="small">verdicts</text>
+      <rect x="1000" y="316" width="230" height="88" class="box"/>
+      <text x="1115" y="344" text-anchor="middle">metering DB + dashboard</text>
+      <text x="1115" y="364" text-anchor="middle" class="small">quality per model / task class</text>
+      <text x="1115" y="381" text-anchor="middle" class="small">right next to cost per user</text>
+
+      <rect x="1000" y="432" width="230" height="86" class="future" rx="8"/>
+      <text x="1115" y="460" text-anchor="middle" class="small">tier-2 agentic judge (future)</text>
+      <text x="1115" y="478" text-anchor="middle" class="small">sandbox · scoped repo creds</text>
+      <text x="1115" y="495" text-anchor="middle" class="small">runs tests · fed by gateway events</text>
+      <path d="M560,400 L740,470 L996,470" class="edge e-eye" stroke-dasharray="5 5" marker-end="url(#a-eye)"/>
+      <text x="770" y="492" class="small">high-value routes only (PR-bound code)</text>
+
+      <text x="24" y="530" class="small">Delta vs. today's dogfood: one more upstream cluster (purple) and the async judge loop (teal). Nothing else moves.</text>
+    </svg>
+    <figcaption><b>Target — no VPN limitation.</b> GLM (or any cheap model) is one more cluster on the
+    dogfood gateway; every user inherits it with zero setup. The Side-Eye loop becomes gateway
+    infrastructure: capture and sampling at the gateway, an async judge worker grading sessions, and
+    verdicts landing in the same metering database that already holds cost — producing the panel the
+    whole pitch aims at: <i>quality per model, next to cost per user</i>. The dashed tier-2 judge
+    (agentic: checks out code, runs tests) is a separate worker service fed by gateway events — never
+    a filter.</figcaption>
+  </figure>
+
+  <p class="updated">Last updated 2026-08-23 (Phase B preview: Sonnet 5 judge live through the dogfood route,
+  structured output via forced tool call, caught both planted defects at $0.01/pair — full gate B pending
+  VPN for the clean-answer control; real model id
+  <span style="font-family:ui-monospace,monospace">rits/zai-org/glm-5-2-fp8</span>; /v1/messages enabled;
+  MCP-tool candidate added, decision pending) · maintained alongside the Side-Eye POC (update phase chips
+  and figures at every phase gate) · siblings: <span style="font-family:ui-monospace,monospace">judge-sampling-pitch.md</span>,
+  <span style="font-family:ui-monospace,monospace">benchmark-results.md</span>, Noy's
+  <span style="font-family:ui-monospace,monospace">praxis-upstream-status.html</span></p>
+</main>
