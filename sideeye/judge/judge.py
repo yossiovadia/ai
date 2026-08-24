@@ -18,6 +18,7 @@ from .schema import (
     SEVERITY_VALUES,
     validate_verdict,
 )
+from .transcript import first_user_ask, render
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -161,3 +162,14 @@ def judge(asked, produced, rubric_text, *, base_url, api_key,
         "cost_usd": cost_usd(model, usage),
     }
     return verdict, meta
+
+
+def judge_session(transcript, rubric_text, *, base_url, api_key,
+                  model=DEFAULT_MODEL, max_tokens=DEFAULT_MAX_TOKENS, timeout=90):
+    """Grade a whole SessionTranscript. Renders it to (asked, produced) and
+    reuses the pair judge unchanged — the judge doesn't care whether `produced`
+    is one answer or a full transcript."""
+    asked = first_user_ask(transcript)
+    produced = render(transcript)
+    return judge(asked, produced, rubric_text, base_url=base_url, api_key=api_key,
+                 model=model, max_tokens=max_tokens, timeout=timeout)
