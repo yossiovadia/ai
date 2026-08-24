@@ -1,69 +1,99 @@
 # Side-Eye POC
 
 A time-boxed proof of concept for the Side-Eye pitch
-(`docs/judge-sampling-pitch.md`): *draft cheap, review expensive* — have a cheap
-(here: free, internal **GLM-5.2**) model do the work, and sample its output to an
-expensive **Claude** judge, asynchronously, outside the request path.
+(`../docs/judge-sampling-pitch.md`): *draft cheap, review expensive* — a cheap
+(here: free, internal **GLM-5.2**) model does the work; its output is sampled to
+an expensive **Claude** judge, asynchronously, outside the request path. The goal
+is a leadership-ready answer to *"how much can we save at held quality?"*
 
 **This is a POC.** Nothing here touches `filters/` or `apis/`. It is plain Python
-glue and scripts. The gates route through a human — see the phase gates below.
+glue — deliberately: the perf-critical hot path is the gateway (Rust/praxis); the
+judge worker is I/O-bound (one multi-second LLM call), so language choice is
+irrelevant off-path. See `../docs/sideeye-phase-c-questions.md` for the design
+decisions this implements.
 
 ## Layout
 
 ```
 sideeye/
-  rubric/rubric_v1.md        versioned grading rubric (rubric_version = file stem)
-  judge/schema.py            verdict schema + validation + is_flagged()
-  judge/judge.py             build request -> forced tool call -> parse verdict
-  run_judge.py               CLI: grade a JSONL of pairs -> verdicts + summary
-  tools/generate_seed_pairs.py   build the POC-0 seed set (real GLM + 2 planted)
-  tests/test_judge.py        unit tests (rubric load, schema, tool parsing) — no net
-  data/seed_pairs.jsonl      what the judge sees: {id, prompt, answer}
-  data/ground_truth.json     planted-defect ground truth (NEVER sent to the judge)
-  verdicts/                  run output (gitignored)
+  rubric/rubric_v1.md            pair-grading rubric (Phase B)
+  rubric/rubric_session_v1.md    session-grading rubric (Phase C, tier-1)
+  judge/schema.py                verdict schema + validation + is_flagged()
+  judge/transcript.py            capture-agnostic SessionTranscript (the pipe)
+  judge/judge.py                 forced-tool-call structured verdict; judge_session()
+  adapters/codex_rollout.py      adapter #1: Codex rollout log -> SessionTranscript
+  record.py                      shared session-verdict record shape
+  run_judge.py                   Phase B: grade a JSONL of (prompt, answer) pairs
+  sampler.py                     Phase C: RANDOM stream — scan rollouts, judge, verdicts/sampled.jsonl
+  escalate.py                    Phase C: HUMAN stream — "ask the expensive model", verdicts/escalated.jsonl
+  cost_report.py                 the money story: counterfactual savings + quality, CLI + HTML
+  tools/                         seed + hard-task generators (need VPN + GLM)
+  tests/                         unit tests (no network): 34 passing
+  data/                          seed_pairs, hard_tasks, ground_truth (fixtures)
+  verdicts/                      run output (gitignored)
 ```
 
-## Phase B — POC-0: the judge loop (the falsification point)
+## The capture-agnostic pipe (the key design decision)
 
-The judge grades each `(prompt, answer)` pair through the **dogfood Anthropic
-route** (so its own spend is metered) using **claude-sonnet-5** with a forced
-tool call for structured output — no parse-and-pray.
+Every capture source produces a **`SessionTranscript`** (`judge/transcript.py`);
+the judge, sampler, and cost report only ever see that shape. So the two capture
+options are just two adapters into one pipe:
 
-Objective harness: the seed set contains two **planted defects** — one
-plausible-but-wrong API claim, one unsupported "tests pass" claim — mixed among
-real GLM answers. The judge is not told which. Gate B measures whether it catches
-both planted defects **without** flagging the clean answers.
+- **Adapter #1 — `codex_rollout`** (this POC): reads Codex's own session logs.
+  In-scope, no praxis changes, full session transcript. Caveat: it's the
+  *client's* view — if the gateway mutated the request, the log wouldn't show it.
+- **Adapter #2 — gateway sampling tap** (production): a praxis filter that
+  samples at request time and emits events. Not built here (it's Rust in the
+  proxy); the schema is designed so POC results carry over unchanged.
+
+## Phase B — pair judging (falsification gate) — DONE
 
 ```bash
-# 1. build the seed set (needs VPN + proxy + ~/.glm-52)
-HTTPS_PROXY=http://10.2.32.57:3128 python sideeye/tools/generate_seed_pairs.py
+python -m pytest sideeye/tests -q                       # 34 tests, no network
+python -m sideeye.run_judge --pairs sideeye/data/seed_pairs.jsonl \
+    --ground-truth sideeye/data/ground_truth.json       # needs ANTHROPIC_* env
+```
+Result: judge caught 2/2 planted defects, 0/4 clean false-positives; on hard
+field-evidence tasks it correctly passed GLM's safe answers and flagged the
+truncated one. ~$0.008/pair on Sonnet 5.
 
-# 2. tests (offline)
-python -m pytest sideeye/tests -q
+## Phase C — automatic capture + escalation
 
-# 3. run the judge (needs ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY in env)
-python -m sideeye.run_judge \
-    --pairs sideeye/data/seed_pairs.jsonl \
-    --ground-truth sideeye/data/ground_truth.json
+Two verdict streams, kept **separate** (escalations are an adversarial sample and
+must never skew the random-sample scoreboard):
+
+```bash
+# RANDOM stream — unbiased quality/savings estimate (Sonnet 5)
+python -m sideeye.sampler --idle-min 10 --sample-rate 1.0
+
+# HUMAN stream — "I'm not sure, ask the expensive model" (Opus 4.8 by default)
+python -m sideeye.escalate                    # latest session, tier-1 review
+python -m sideeye.escalate --model claude-fable-5   # the nasty ones
+
+# The money story (counterfactual savings + held quality; CLI + HTML)
+python -m sideeye.cost_report --html sideeye/verdicts/cost-report.html
 ```
 
-Cost: ~$0.01–0.02 per pair on Sonnet 5 (input-heavy; verdicts are tiny).
+Escalation is **review, not re-answer**; it carries a **tier knob** (tier-1
+transcript review = default; tier-2 agentic "run the code" = the only tier that
+catches execution-dependent defects, and is a sandboxed worker, not a script —
+not built in this POC, and it refuses honestly if asked).
 
-**Gate B:** a human reads the verdicts against their own opinion of the answers.
-If the judge's signal is noise, the project stops here — the cheapest
-falsification point Side-Eye will ever have.
+The whole pipeline (capture → judge → verdict → cost) is verified end-to-end on
+real Codex rollouts. The judge routes through the dogfood Anthropic route, so
+judge spend is metered on the dashboard.
 
-## Carry-forwards for Phase C (capture pipeline — not built yet)
+## Deferred: live GLM plumbing (needs VPN)
 
-1. **`stream_options.include_usage`** — streamed responses carry usage only if
-   the client asks for it. Verify Codex sets it, or plan for praxis to inject it,
-   or GLM tokens show as zero on the dashboard.
-2. **`reasoning_content`** — GLM-5.2 is a reasoning model and emits thinking in a
-   separate field. Store it, but the rubric grades the served `content` only.
+Only the live wiring waits for a "start on GLM" session: the CONNECT tunnel
+(Python glue exposing GLM as localhost), the local praxis GLM config, the
+all-zeros GLM pricing row (so GLM shows at $0), and the Codex provider profile.
+Once those run, real Codex→praxis→GLM sessions flow into the exact pipeline above
+and the cost report fills with real numbers.
 
 ## Rules honored
 
 - Secrets from env / `~/.glm-52` only — never hardcoded, committed, or logged.
-- Model string standardized on `rits/zai-org/glm-5-2-fp8` everywhere.
-- Judge routes through dogfood so judge spend is visible on the dashboard.
-- Rubric is versioned; verdicts record the rubric version and judge model.
+- Model string standardized on `rits/zai-org/glm-5-2-fp8`.
+- Judge routes through dogfood so judge spend is visible.
+- Counterfactual savings are labeled estimates; GLM actual cost is $0.
