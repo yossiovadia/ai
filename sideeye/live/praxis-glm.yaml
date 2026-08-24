@@ -62,7 +62,7 @@ filter_chains:
           - name: glm
             tls:
               sni: "ete-litellm.ai-models.vpc.res.ibm.com"
-            idle_timeout_ms: 45000
+            idle_timeout_ms: 8000
             endpoints:
               - "127.0.0.1:18443"
 
@@ -104,6 +104,6 @@ filter_chains:
           - name: glm
             tls:
               sni: "ete-litellm.ai-models.vpc.res.ibm.com"
-            idle_timeout_ms: 45000
+            idle_timeout_ms: 8000
             endpoints:
               - "127.0.0.1:18443"
