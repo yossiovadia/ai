@@ -9,22 +9,36 @@
 # the API key is a placeholder (praxis injects the real GLM key server-side).
 set -euo pipefail
 
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8181"
-export ANTHROPIC_API_KEY="placeholder-praxis-injects-real-key"
-export ANTHROPIC_MODEL="rits/zai-org/glm-5-2-fp8"
-export ANTHROPIC_SMALL_FAST_MODEL="rits/zai-org/glm-5-2-fp8"
-# Make sure Claude Code uses ANTHROPIC_BASE_URL, not Vertex.
-unset CLAUDE_CODE_USE_VERTEX ANTHROPIC_VERTEX_PROJECT_ID 2>/dev/null || true
+MODEL="rits/zai-org/glm-5-2-fp8"
 
-if ! curl -sf -o /dev/null --max-time 3 http://127.0.0.1:8181/ 2>/dev/null; then
-    # A bare GET may 404/405; just check the port is open.
-    if ! lsof -nP -iTCP:8181 -sTCP:LISTEN >/dev/null 2>&1; then
-        echo "ERROR: praxis is not listening on :8181. Run ./sideeye/live/setup.sh first." >&2
-        exit 1
-    fi
+if ! lsof -nP -iTCP:8181 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: praxis is not listening on :8181. Run ./sideeye/live/setup.sh first." >&2
+    exit 1
 fi
 
-echo "Claude Code -> GLM-5.2  (praxis :8181, model rits/zai-org/glm-5-2-fp8)"
+# Claude Code's ~/.claude/settings.json force-sets CLAUDE_CODE_USE_VERTEX=1 (and
+# Vertex project/region + default-model aliases) via its own `env` block, which
+# overrides the shell — so a plain `unset` won't stop it using Vertex. Override
+# at the settings layer instead: blank the Vertex vars and the model aliases,
+# point at the local GLM gateway, and route the small/fast (background) model to
+# GLM too (otherwise background calls hit a haiku model GLM rejects). Blanks win
+# on merge over settings.json.
+GLM_SETTINGS=$(cat <<JSON
+{"env":{
+  "CLAUDE_CODE_USE_VERTEX":"",
+  "ANTHROPIC_VERTEX_PROJECT_ID":"",
+  "CLOUD_ML_REGION":"",
+  "ANTHROPIC_BASE_URL":"http://127.0.0.1:8181",
+  "ANTHROPIC_API_KEY":"placeholder-praxis-injects-real-key",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL":"",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL":"",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL":"",
+  "ANTHROPIC_SMALL_FAST_MODEL":"$MODEL"
+},"model":"$MODEL"}
+JSON
+)
+
+echo "Claude Code -> GLM-5.2  (praxis :8181, model $MODEL)"
 echo "Usage is metered locally at \$0 -> http://127.0.0.1:9090/dashboard"
 echo
-exec claude "$@"
+exec claude --settings "$GLM_SETTINGS" --model "$MODEL" "$@"
