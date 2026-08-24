@@ -67,14 +67,20 @@ def main():
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC))
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--out", default=str(DEFAULT_OUT))
-    ap.add_argument("--base-url", default=os.environ.get("ANTHROPIC_BASE_URL"))
+    # Judge must hit the real Claude route (dogfood), never GLM — SIDEEYE_JUDGE_*
+    # wins so it's correct even in a run-claude-glm shell.
+    ap.add_argument("--base-url",
+                    default=os.environ.get("SIDEEYE_JUDGE_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL"))
     args = ap.parse_args()
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("SIDEEYE_JUDGE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
     if not args.base_url:
-        fail("ANTHROPIC_BASE_URL not set")
+        fail("no judge route: set SIDEEYE_JUDGE_BASE_URL (or ANTHROPIC_BASE_URL) to the dogfood Claude route")
     if not api_key:
-        fail("ANTHROPIC_API_KEY not set")
+        fail("no judge key: set SIDEEYE_JUDGE_API_KEY (or ANTHROPIC_API_KEY)")
+    if "127.0.0.1:818" in args.base_url or "localhost:818" in args.base_url:
+        fail(f"judge route points at the local GLM gateway ({args.base_url}); the judge must use the "
+             "real Claude route. Set SIDEEYE_JUDGE_BASE_URL to the dogfood Anthropic route.")
 
     rubric_text = load_rubric(args.rubric)
     rv = rubric_version(args.rubric)

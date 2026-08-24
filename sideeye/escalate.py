@@ -57,7 +57,11 @@ def main():
     ap.add_argument("--model", default=ESCALATION_MODEL)
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC))
     ap.add_argument("--out", default=str(DEFAULT_OUT))
-    ap.add_argument("--base-url", default=os.environ.get("ANTHROPIC_BASE_URL"))
+    # The judge must ALWAYS hit the real Claude route (dogfood), never GLM.
+    # SIDEEYE_JUDGE_* wins so this is correct even in a run-claude-glm shell
+    # where ANTHROPIC_BASE_URL points at the local GLM gateway.
+    ap.add_argument("--base-url",
+                    default=os.environ.get("SIDEEYE_JUDGE_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL"))
     args = ap.parse_args()
 
     if args.tier == 2:
@@ -66,11 +70,14 @@ def main():
              "script — it is the only tier that catches execution-dependent "
              "defects. Use --tier 1 for transcript review.")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("SIDEEYE_JUDGE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
     if not args.base_url:
-        fail("ANTHROPIC_BASE_URL not set")
+        fail("no judge route: set SIDEEYE_JUDGE_BASE_URL (or ANTHROPIC_BASE_URL) to the dogfood Claude route")
     if not api_key:
-        fail("ANTHROPIC_API_KEY not set")
+        fail("no judge key: set SIDEEYE_JUDGE_API_KEY (or ANTHROPIC_API_KEY)")
+    if "127.0.0.1:818" in args.base_url or "localhost:818" in args.base_url:
+        fail(f"judge route points at the local GLM gateway ({args.base_url}); the judge must use the "
+             "real Claude route. Set SIDEEYE_JUDGE_BASE_URL to the dogfood Anthropic route.")
 
     rollout = pathlib.Path(args.rollout) if args.rollout else latest_session(args.client)
     if not rollout or not rollout.exists():
