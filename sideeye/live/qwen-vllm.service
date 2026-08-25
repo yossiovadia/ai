@@ -31,13 +31,15 @@ ExecStart=/usr/bin/podman run --replace --name qwen-vllm \
   docker.io/vllm/vllm-openai:latest \
   --model Qwen/Qwen3.8-27B-FP8 --served-model-name qwen \
   --max-model-len 262144 --max-num-seqs 32 \
-  --kv-cache-dtype fp8 --gpu-memory-utilization 0.92 \
+  --kv-cache-dtype fp8 --gpu-memory-utilization 0.94 \
   --enable-prefix-caching --reasoning-parser qwen3 \
-  --enable-auto-tool-choice --tool-call-parser qwen3_coder --port 8000
-# MTP speculative decoding (--speculative-config '{"method":"mtp",...}') is the
-# real speed lever but crashed the engine core on this tight 48GB card alongside
-# 256K context — needs careful tuning (fewer speculative tokens, lower
-# max-num-seqs, or a smaller max-model-len to free memory). Pursue separately.
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder \
+  --speculative-config '{"method":"mtp","num_speculative_tokens":3}' --port 8000
+# MTP speculative decoding (the model's built-in draft head): ~1.9x decode
+# speedup (measured ~35 vs ~19 tok/s) with NO reasoning reduction. Needed
+# gpu-memory-utilization 0.94 (not 0.92) — MTP's draft + padding layers left KV
+# ~160MB short of the full 262144 context at 0.92; 0.94 covers it and keeps 256K.
+# The JSON MUST be single-quoted or systemd strips the inner quotes -> bad JSON.
 ExecStop=/usr/bin/podman stop -t 30 qwen-vllm
 Restart=always
 RestartSec=10
