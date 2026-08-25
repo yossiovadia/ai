@@ -40,9 +40,12 @@ source "$ENV_FILE"
 # with REGION in the env if your zone naming ever differs from this convention.
 REGION="${REGION:-${ZONE%-*}}"
 # The readiness probe must use vLLM's actual --served-model-name, or it 404s
-# ("model does not exist") even when the box is serving fine. The running unit
-# serves "qwen"; override with QWEN_SERVED_MODEL in the env if you rename it.
-SERVED_MODEL="${QWEN_SERVED_MODEL:-qwen}"
+# ("model does not exist") even when the box is serving fine. Override with
+# QWEN_SERVED_MODEL in the env if you rename it.
+SERVED_MODEL="${QWEN_SERVED_MODEL:-Qwen3.8-27B-FP8}"
+# Route to probe for readiness: the unified route (model-based) reaches the box
+# via its vllm cluster; falls back to the qwen-only route if that's all that's set.
+PROBE_ROUTE="${UNIFIED_ROUTE:-${QWEN_ROUTE:-}}"
 
 command -v ibmcloud >/dev/null 2>&1 || die "ibmcloud CLI not found. Install: https://cloud.ibm.com/docs/cli"
 command -v python3  >/dev/null 2>&1 || die "python3 not found (needed to parse ibmcloud JSON)"
@@ -98,31 +101,31 @@ instance_status() {
 # Poll the live Qwen route end-to-end (praxis route -> vLLM) until it answers,
 # so --wait means "actually serving requests", not just "VM powered on". Uses a
 # minimal 1-token message; Qwen is metered at $0 so the probe is free. Needs
-# QWEN_ROUTE + MAAS_API_KEY in the env; skipped with a note if either is absent.
+# PROBE_ROUTE + MAAS_API_KEY in the env; skipped with a note if either is absent.
 wait_for_serving() {
     local timeout="${1:-600}" waited=0 code
-    if [ -z "${QWEN_ROUTE:-}" ] || [ -z "${MAAS_API_KEY:-}" ]; then
-        echo "  (QWEN_ROUTE/MAAS_API_KEY not set — skipping serving check; VM is on,"
+    if [ -z "$PROBE_ROUTE" ] || [ -z "${MAAS_API_KEY:-}" ]; then
+        echo "  (UNIFIED_ROUTE/QWEN_ROUTE or MAAS_API_KEY not set — skipping serving check; VM is on,"
         echo "   vLLM typically needs another ~1-3 min to load the model + compile cache)"
         return
     fi
-    echo "  waiting for vLLM to serve on the Qwen route (up to ${timeout}s)..."
+    echo "  waiting for vLLM to serve via the praxis route (up to ${timeout}s)..."
     while [ "$waited" -lt "$timeout" ]; do
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-            -X POST "$QWEN_ROUTE/v1/messages" \
+            -X POST "$PROBE_ROUTE/v1/messages" \
             -H "x-api-key: $MAAS_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
             -d '{"model":"'"$SERVED_MODEL"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
             2>/dev/null || echo 000)"
         if [ "$code" = "200" ]; then
-            echo "  serving (HTTP 200 from $QWEN_ROUTE)"
+            echo "  serving (HTTP 200 via $PROBE_ROUTE)"
             return
         fi
         sleep 10; waited=$((waited + 10))
         printf '  ...still warming up (%ss, last HTTP %s)\n' "$waited" "$code"
     done
-    die "timed out after ${timeout}s waiting for the Qwen route to serve (last HTTP ${code:-none})"
+    die "timed out after ${timeout}s waiting for the route to serve (last HTTP ${code:-none})"
 }
 
 # Wait for the VM to reach a target status before doing route checks.
@@ -142,15 +145,15 @@ cmd_status() {
     echo "Region   : $REGION (zone $ZONE)"
     echo "Status   : $st"
     [ "$st" = "notfound" ] && die "instance not found in region $REGION — wrong INSTANCE_ID/REGION, or it was deleted."
-    if [ "$st" = "running" ] && [ -n "${QWEN_ROUTE:-}" ] && [ -n "${MAAS_API_KEY:-}" ]; then
+    if [ "$st" = "running" ] && [ -n "$PROBE_ROUTE" ] && [ -n "${MAAS_API_KEY:-}" ]; then
         local code
         code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-            -X POST "$QWEN_ROUTE/v1/messages" -H "x-api-key: $MAAS_API_KEY" \
+            -X POST "$PROBE_ROUTE/v1/messages" -H "x-api-key: $MAAS_API_KEY" \
             -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
             -d '{"model":"'"$SERVED_MODEL"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
             2>/dev/null || echo 000)"
         if [ "$code" = "200" ]; then
-            echo "Serving  : yes (HTTP 200 on the Qwen route)"
+            echo "Serving  : yes (HTTP 200 via the praxis route)"
         else
             echo "Serving  : NOT yet (route HTTP $code — VM is up but vLLM is still loading, or down)"
         fi

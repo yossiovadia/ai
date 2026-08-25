@@ -56,7 +56,7 @@ spec:
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: ai-gateway-qwen
+  name: ai-gateway-unified
   namespace: ai-gateway-dogfood
   labels:
     app: praxis
@@ -67,7 +67,7 @@ spec:
     kind: Service
     name: praxis
   port:
-    targetPort: qwen
+    targetPort: unified
   tls:
     termination: edge
 ---
