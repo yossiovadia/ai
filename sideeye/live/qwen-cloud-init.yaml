@@ -1,0 +1,74 @@
+#cloud-config
+# Reproducible first-boot provisioning for the Qwen3.8-27B-FP8 GPU box.
+#
+# Base image is RHEL AI + NVIDIA (ibm-redhat-ai-nvidia-*), which already ships
+# the NVIDIA driver, podman, and CDI — so there is no fragile driver install
+# here. This file defines EVERYTHING the box needs so re-creating it is one
+# command (provision-qwen-gpu.sh), never a manual SSH ritual again.
+#
+# __ROOT_PW__ is substituted at create time by the provisioning script from
+# ROOT_CONSOLE_PASSWORD in the gitignored qwen-gpu.env — it is NOT stored here.
+
+# Break-glass: a root password so the IBM VNC/serial console is a usable
+# fallback if sshd ever dies again. That gap (sshd down + no console login) is
+# exactly what locked us out of the previous box.
+chpasswd:
+  list: |
+    root:__ROOT_PW__
+  expire: false
+ssh_pwauth: false   # keep SSH key-only; the password is for the console only
+
+write_files:
+  # The proven, tuned vLLM unit. Served name is baked in as the final label
+  # (Qwen3.8-27B-FP8) so the dashboard is correct from first boot — no post-hoc
+  # rename needed. Flags mirror the validated config (FP8 KV, 256K ctx, MTP).
+  - path: /etc/systemd/system/qwen-vllm.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Qwen3.8-27B-FP8 vLLM (Side-Eye GPU box)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/podman run --replace --name qwen-vllm \
+        --device nvidia.com/gpu=all --network host --shm-size 16g \
+        -v /var/vllm-cache:/root/.cache/huggingface:Z \
+        -v /var/vllm-compile:/root/.cache/vllm:Z \
+        docker.io/vllm/vllm-openai:latest \
+        --model Qwen/Qwen3.8-27B-FP8 --served-model-name Qwen3.8-27B-FP8 \
+        --max-model-len 262144 --max-num-seqs 32 \
+        --kv-cache-dtype fp8 --gpu-memory-utilization 0.94 \
+        --enable-prefix-caching --reasoning-parser qwen3 \
+        --enable-auto-tool-choice --tool-call-parser qwen3_coder \
+        --speculative-config '{"method":"mtp","num_speculative_tokens":3}' --port 8000
+      ExecStop=/usr/bin/podman stop -t 30 qwen-vllm
+      Restart=always
+      RestartSec=10
+      TimeoutStartSec=900
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Protect sshd from the OOM-killer — the failure that locked us out. With a
+  # score of -1000 the kernel kills vLLM (restartable) before sshd under memory
+  # pressure, so remote access survives.
+  - path: /etc/systemd/system/sshd.service.d/oom-protect.conf
+    permissions: '0644'
+    content: |
+      [Service]
+      OOMScoreAdjust=-1000
+
+runcmd:
+  # Persist the HF model cache + torch.compile cache across restarts.
+  - mkdir -p /var/vllm-cache /var/vllm-compile
+  - chmod 777 /var/vllm-cache /var/vllm-compile
+  # Ensure the CDI spec exists so `--device nvidia.com/gpu=all` resolves (RHEL AI
+  # ships nvidia-ctk; regenerate defensively, ignore if already present).
+  - bash -c 'command -v nvidia-ctk >/dev/null && nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || true'
+  - systemctl daemon-reload
+  # sshd must be enabled AND protected before anything memory-hungry starts.
+  - systemctl enable --now sshd
+  - systemctl restart sshd
+  - systemctl enable --now qwen-vllm

@@ -29,7 +29,7 @@ ExecStart=/usr/bin/podman run --replace --name qwen-vllm \
   -v /var/vllm-cache:/root/.cache/huggingface:Z \
   -v /var/vllm-compile:/root/.cache/vllm:Z \
   docker.io/vllm/vllm-openai:latest \
-  --model Qwen/Qwen3.8-27B-FP8 --served-model-name qwen \
+  --model Qwen/Qwen3.8-27B-FP8 --served-model-name Qwen3.8-27B-FP8 \
   --max-model-len 262144 --max-num-seqs 32 \
   --kv-cache-dtype fp8 --gpu-memory-utilization 0.94 \
   --enable-prefix-caching --reasoning-parser qwen3 \

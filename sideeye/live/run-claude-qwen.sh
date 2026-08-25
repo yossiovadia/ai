@@ -16,7 +16,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/qwen-gpu.env"
 : "${MAAS_API_KEY:?MAAS_API_KEY not in qwen-gpu.env}"
 : "${QWEN_ROUTE:?QWEN_ROUTE not in qwen-gpu.env}"
-MODEL="qwen"
+# Must EXACTLY match vLLM's --served-model-name (qwen-vllm.service) AND the
+# model_pricing row, or vLLM 400s (unknown model) or the gateway bills the
+# $15/M default (no $0 pricing row). All three are "Qwen3.8-27B-FP8".
+MODEL="Qwen3.8-27B-FP8"
 
 # ~/.claude/settings.json force-sets CLAUDE_CODE_USE_VERTEX=1; blank it here or
 # Claude Code ignores ANTHROPIC_BASE_URL and tries Vertex. Route the small/fast
