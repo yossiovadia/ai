@@ -28,13 +28,16 @@ data:
         filter_chains:
           - benchmark
 
-      # Self-hosted Qwen3.8-27B-FP8 on an in-VPC L40S GPU box. vLLM serves the
-      # Anthropic Messages API natively, so this is a plain passthrough (no
-      # translation) — Claude Code -> here -> Qwen, metered like everything else.
-      - name: qwen
-        address: "0.0.0.0:8083"
+      # Unified Anthropic-dialect route: ONE URL for Claude Code, model-based
+      # routing to multiple backends. Claude Code always speaks /v1/messages,
+      # and Anthropic + Qwen (vLLM) both serve it natively, so /model can switch
+      # between them with no translation. model_to_header promotes the body's
+      # model; the router sends Qwen3.8-27B-FP8 to the vllm cluster and every
+      # other (claude-*) model to the anthropic cluster (the default).
+      - name: unified
+        address: "0.0.0.0:8084"
         filter_chains:
-          - qwen
+          - unified
 
     filter_chains:
       - name: anthropic
@@ -211,11 +214,11 @@ data:
                 endpoints:
                   - "llm-katan:8000"
 
-      # Qwen chain: auth + identity + meter, then passthrough to the in-VPC
-      # vLLM box over plain HTTP. No model_access (dedicated route), no
-      # credential_injection (Qwen has no upstream auth). token_count uses the
-      # anthropic provider because vLLM's /v1/messages returns Anthropic usage.
-      - name: qwen
+      # Unified Anthropic-dialect chain: one route, many models. Same building
+      # blocks as the single-provider chains, but with model_to_header + a
+      # multi-rule router so the client can /model between Claude and Qwen on a
+      # single base URL.
+      - name: unified
         filters:
           - filter: api_key_auth
             validate_url: "http://maas-api:8080/internal/v1/api-keys/validate"
@@ -223,17 +226,35 @@ data:
             cache_ttl_seconds: 300
             timeout_seconds: 5
 
+          - filter: model_access
+            mode: denylist
+            models:
+              - "claude-fable-*"
+            overrides:
+              - groups: ["dogfood-testing"]
+                mode: allowlist
+                models: ["*"]
+            group_metadata_key: "x-tenant-group"
+            max_body_bytes: 33554432
+
           - filter: identity_header_guard
             prefix: "x-tenant-"
 
+          # Promote the request body's "model" field to X-Model so the router
+          # can branch on it.
+          - filter: model_to_header
+            header: X-Model
+
           - filter: router
             routes:
+              # Self-hosted models get explicit rules; everything else (all the
+              # claude-* names) falls through to the anthropic default.
               - path_prefix: "/"
-                # Cluster name == the provider label the dashboard shows
-                # (external_metering stamps data.provider from the cluster name).
-                # Named after the serving tech, not the model, so the dashboard
-                # reads "vllm" for this self-hosted route.
+                headers:
+                  x-model: "Qwen3.8-27B-FP8"
                 cluster: vllm
+              - path_prefix: "/"
+                cluster: anthropic
 
           - filter: external_metering
             metering_url: "http://metering-service:8080"
@@ -242,17 +263,42 @@ data:
             source: "praxis-ai"
             fail_open: true
             identity_header_prefix: "x-tenant-"
-            default_model: "Qwen3.8-27B-FP8"
+            default_model: "unknown"
 
+          # Both backends return Anthropic-format usage, so one provider works.
           - filter: token_count
             provider: anthropic
 
           - filter: token_usage_headers
 
+          # Only the anthropic cluster needs an upstream credential; a vllm-routed
+          # request matches no entry here, so nothing is injected for Qwen.
+          - filter: credential_injection
+            clusters:
+              - name: anthropic
+                header: x-api-key
+                env_var: ANTHROPIC_API_KEY
+                strip_client_credential: true
+
+          # Anthropic validates Host against its SNI, so it must be set. vLLM
+          # ignores the Host header, so setting it unconditionally is harmless
+          # for Qwen-routed requests. (If a future backend on this listener
+          # DOES validate Host, this must become per-cluster.)
+          - filter: headers
+            request_set:
+              - name: "Host"
+                value: "api.anthropic.com"
+              - name: "anthropic-version"
+                value: "2023-06-01"
+
           - filter: load_balancer
             clusters:
-              # name "vllm" (not "qwen") = the provider label on the dashboard.
-              # Must match the router's `cluster:` ref above.
+              - name: anthropic
+                tls:
+                  sni: "api.anthropic.com"
+                idle_timeout_ms: 45000
+                endpoints:
+                  - "api.anthropic.com:443"
               - name: vllm
                 idle_timeout_ms: 45000
                 endpoints:
@@ -288,8 +334,8 @@ spec:
               name: openai
             - containerPort: 8082
               name: benchmark
-            - containerPort: 8083
-              name: qwen
+            - containerPort: 8084
+              name: unified
             - containerPort: 9901
               name: admin
           env:
@@ -343,9 +389,9 @@ spec:
     - name: benchmark
       port: 8082
       targetPort: 8082
-    - name: qwen
-      port: 8083
-      targetPort: 8083
+    - name: unified
+      port: 8084
+      targetPort: 8084
     - name: admin
       port: 9901
       targetPort: 9901
