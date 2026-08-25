@@ -1,0 +1,43 @@
+# systemd unit for the self-hosted Qwen3.8-27B-FP8 vLLM server on the in-VPC
+# L40S GPU box (RHEL AI image). Auto-starts on boot, auto-restarts on failure,
+# and persists both the HF model cache and the torch.compile cache so restarts
+# skip the re-download and the recompile (a restart is ~3-4 min: CUDA-graph
+# capture still runs each start; a cold start is ~5-6 min).
+#
+# Install on the GPU box (as the box's admin user):
+#   sudo mkdir -p /var/vllm-cache /var/vllm-compile && sudo chmod 777 /var/vllm-cache /var/vllm-compile
+#   sudo cp qwen-vllm.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now qwen-vllm
+#
+# Notes:
+#   - vLLM 0.27+ required (this brand-new qwen3_5 arch + transformers 5.8 config);
+#     RHEL AI 3.4's bundled vLLM 0.18/transformers 4.57 is too old, hence the
+#     upstream docker.io/vllm/vllm-openai image.
+#   - FP8 (not NVFP4): the L40S is Ada (sm89); NVFP4 kernels are Blackwell-only.
+#   - reasoning-parser qwen3 -> clean answers (thinking separated).
+#   - enable-auto-tool-choice + tool-call-parser qwen3_coder -> Claude Code tools.
+
+[Unit]
+Description=Qwen3.8-27B-FP8 vLLM (Side-Eye GPU box)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/podman run --replace --name qwen-vllm \
+  --device nvidia.com/gpu=all --network host --shm-size 16g \
+  -v /var/vllm-cache:/root/.cache/huggingface:Z \
+  -v /var/vllm-compile:/root/.cache/vllm:Z \
+  docker.io/vllm/vllm-openai:latest \
+  --model Qwen/Qwen3.8-27B-FP8 --served-model-name qwen \
+  --max-model-len 262144 --max-num-seqs 32 \
+  --kv-cache-dtype fp8 --gpu-memory-utilization 0.92 \
+  --enable-prefix-caching --reasoning-parser qwen3 \
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder --port 8000
+ExecStop=/usr/bin/podman stop -t 30 qwen-vllm
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

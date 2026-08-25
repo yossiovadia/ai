@@ -28,6 +28,14 @@ data:
         filter_chains:
           - benchmark
 
+      # Self-hosted Qwen3.8-27B-FP8 on an in-VPC L40S GPU box. vLLM serves the
+      # Anthropic Messages API natively, so this is a plain passthrough (no
+      # translation) — Claude Code -> here -> Qwen, metered like everything else.
+      - name: qwen
+        address: "0.0.0.0:8083"
+        filter_chains:
+          - qwen
+
     filter_chains:
       - name: anthropic
         filters:
@@ -202,6 +210,47 @@ data:
               - name: llm-katan
                 endpoints:
                   - "llm-katan:8000"
+
+      # Qwen chain: auth + identity + meter, then passthrough to the in-VPC
+      # vLLM box over plain HTTP. No model_access (dedicated route), no
+      # credential_injection (Qwen has no upstream auth). token_count uses the
+      # anthropic provider because vLLM's /v1/messages returns Anthropic usage.
+      - name: qwen
+        filters:
+          - filter: api_key_auth
+            validate_url: "http://maas-api:8080/internal/v1/api-keys/validate"
+            token_header: "x-api-key"
+            cache_ttl_seconds: 300
+            timeout_seconds: 5
+
+          - filter: identity_header_guard
+            prefix: "x-tenant-"
+
+          - filter: router
+            routes:
+              - path_prefix: "/"
+                cluster: qwen
+
+          - filter: external_metering
+            metering_url: "http://metering-service:8080"
+            timeout_seconds: 5
+            feature_key: "inference-tokens"
+            source: "praxis-ai"
+            fail_open: true
+            identity_header_prefix: "x-tenant-"
+            default_model: "qwen"
+
+          - filter: token_count
+            provider: anthropic
+
+          - filter: token_usage_headers
+
+          - filter: load_balancer
+            clusters:
+              - name: qwen
+                idle_timeout_ms: 45000
+                endpoints:
+                  - "10.240.0.9:8000"
 ---
 # NOTE: provider-credentials Secret is created by deploy.sh from
 # env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY). Do NOT include it
@@ -233,6 +282,8 @@ spec:
               name: openai
             - containerPort: 8082
               name: benchmark
+            - containerPort: 8083
+              name: qwen
             - containerPort: 9901
               name: admin
           env:
@@ -286,6 +337,9 @@ spec:
     - name: benchmark
       port: 8082
       targetPort: 8082
+    - name: qwen
+      port: 8083
+      targetPort: 8083
     - name: admin
       port: 9901
       targetPort: 9901

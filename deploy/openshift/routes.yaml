@@ -56,6 +56,24 @@ spec:
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
+  name: ai-gateway-qwen
+  namespace: ai-gateway-dogfood
+  labels:
+    app: praxis
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
+spec:
+  to:
+    kind: Service
+    name: praxis
+  port:
+    targetPort: qwen
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
   name: dashboard
   namespace: ai-gateway-dogfood
   labels:
