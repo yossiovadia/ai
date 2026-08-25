@@ -32,11 +32,14 @@ SETTINGS=$(cat <<JSON
   "ANTHROPIC_DEFAULT_OPUS_MODEL":"",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL":"",
   "ANTHROPIC_SMALL_FAST_MODEL":"$MODEL"
-},"model":"$MODEL","effortLevel":"medium"}
+},"model":"$MODEL","effortLevel":"xhigh"}
 JSON
 )
-# effortLevel "medium": Qwen's vLLM only accepts reasoning_effort xhigh/medium/low,
-# NOT the "high" your global settings.json sends (that 500s every request).
+# effortLevel "xhigh": the model's full-reasoning default. We only override at all
+# because your global settings.json sends "high", which Qwen's vLLM rejects
+# (it accepts xhigh/medium/low). This is NOT dialed down — speed comes from MTP
+# speculative decoding on the server, not from reducing reasoning. Dial to
+# "medium"/"low" yourself only if you personally want less thinking.
 
 echo "Claude Code -> dogfood praxis -> Qwen3.8-27B-FP8 (in-VPC L40S)"
 echo "Metered on the dogfood dashboard (model 'qwen', \$0)."
