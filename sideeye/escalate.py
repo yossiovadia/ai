@@ -33,7 +33,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from sideeye.adapters import latest_session, load_transcript  # noqa: E402
+from sideeye.adapters import latest_session, load_transcript, resolve_current_session  # noqa: E402
 from sideeye.judge.code_artifact import build_code_artifact  # noqa: E402
 from sideeye.judge.judge import (  # noqa: E402
     build_request_body,
@@ -41,6 +41,7 @@ from sideeye.judge.judge import (  # noqa: E402
     judge_route_guard,
     judge_session,
     load_rubric,
+    resolve_model,
     rubric_version,
 )
 from sideeye.judge.transcript import first_user_ask, render  # noqa: E402
@@ -113,6 +114,7 @@ def main():
     ap.add_argument("--base-url",
                     default=os.environ.get("SIDEEYE_JUDGE_BASE_URL") or os.environ.get("ANTHROPIC_BASE_URL"))
     args = ap.parse_args()
+    args.model = resolve_model(args.model)   # accept fable/opus/sonnet aliases
 
     if args.tier == 2:
         fail("tier-2 (agentic: check out the code and RUN it) is not implemented "
@@ -142,7 +144,13 @@ def main():
         rollout = latest_session(args.client, scope=args.project)
     else:
         scope = "cwd"
-        rollout = latest_session(args.client, scope="cwd")
+        # Robust to a drifted shell cwd (e.g. a skill's Bash tool running from
+        # /tmp): try the cwd project, else fall back to the most-recently-written
+        # session — the one you're actually in.
+        rollout, fell_back = resolve_current_session(args.client)
+        if fell_back and rollout:
+            print(f"(cwd has no {args.client} session; using the most recently "
+                  "active session instead)")
     if not rollout or not rollout.exists():
         if scope == "cwd":
             fail(f"no {args.client} session in this project "

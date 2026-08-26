@@ -96,6 +96,22 @@ RECORD_VERDICT_TOOL = {
 }
 
 
+# Friendly short names for the judge, so `--model fable` works from the CLI and
+# skills without memorizing the full string. Full model ids pass through unchanged.
+MODEL_ALIASES = {
+    "fable": "claude-fable-5",
+    "opus": "claude-opus-4-8",
+    "sonnet": "claude-sonnet-5",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def resolve_model(name):
+    """Map a friendly alias (fable/opus/sonnet/haiku) to its full model id; leave
+    an already-full id (e.g. claude-opus-4-8) untouched."""
+    return MODEL_ALIASES.get((name or "").strip().lower(), name)
+
+
 def load_rubric(path) -> str:
     return pathlib.Path(path).read_text(encoding="utf-8")
 

@@ -34,7 +34,7 @@ ExecStart=/usr/bin/podman run --replace --name qwen-vllm \
   --kv-cache-dtype fp8 --gpu-memory-utilization 0.94 \
   --enable-prefix-caching --reasoning-parser qwen3 \
   --enable-auto-tool-choice --tool-call-parser qwen3_coder \
-  --speculative-config '{"method":"mtp","num_speculative_tokens":3}' --port 8000
+  --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --port 8000
 # MTP speculative decoding (the model's built-in draft head): ~1.9x decode
 # speedup (measured ~35 vs ~19 tok/s) with NO reasoning reduction. Needed
 # gpu-memory-utilization 0.94 (not 0.92) — MTP's draft + padding layers left KV

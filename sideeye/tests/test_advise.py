@@ -103,6 +103,14 @@ def test_resolve_judge_route_prefers_sideeye_over_anthropic(monkeypatch):
     assert base == "https://api.anthropic.com" and key == "real-key"
 
 
+def test_resolve_model_aliases():
+    assert J.resolve_model("fable") == "claude-fable-5"
+    assert J.resolve_model("OPUS") == "claude-opus-4-8"      # case-insensitive
+    assert J.resolve_model("sonnet") == "claude-sonnet-5"
+    assert J.resolve_model("claude-fable-5") == "claude-fable-5"   # full id passthrough
+    assert J.resolve_model("some-other-model") == "some-other-model"
+
+
 def test_resolve_judge_route_falls_back_to_anthropic(monkeypatch):
     monkeypatch.delenv("SIDEEYE_JUDGE_BASE_URL", raising=False)
     monkeypatch.delenv("SIDEEYE_JUDGE_API_KEY", raising=False)
