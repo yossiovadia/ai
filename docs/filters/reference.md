@@ -81,6 +81,12 @@ see the [Praxis core filter reference][core-ref].
 |--------|-------------|
 | [`external_metering`](external_metering.md) | Integrates with an external metering service for pre-request balance checks and post-response token usage reporting. |
 
+### Model Catalog
+
+| Filter | Description |
+|--------|-------------|
+| [`model_catalog`](model_catalog.md) | Serves a configured model list as a terminal response to `GET {path}`. |
+
 ### Prompt Enrich
 
 | Filter | Description |
