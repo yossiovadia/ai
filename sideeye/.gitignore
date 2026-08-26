@@ -6,3 +6,9 @@ verdicts/
 
 # Codex isolated runtime home (session logs, blocked path)
 live/codex-home/
+
+# GPU deploy config (has ids, and points at the private key)
+*.env
+
+# Python packaging build artifact
+*.egg-info/

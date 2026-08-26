@@ -1,0 +1,605 @@
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<!-- Side-Eye MVP — draft cheap, review expensive. On-demand session review explainer. -->
+<!-- Scope of record: docs/sideeye-mvp-scope.md -->
+
+<header class="masthead">
+  <div class="kicker">Side-Eye · MVP</div>
+  <h1>Draft cheap,<br><em>review expensive.</em></h1>
+  <p class="lede">A cheap internal model (Qwen/GLM) writes the code; on demand, a frontier model reads the finished session and reviews it. The trick is token asymmetry: <strong>output tokens cost ~5× input tokens</strong> — so the cheap model pays the expensive side (writing) and the frontier model pays the cheap side (reading). Near-frontier trust at a fraction of frontier cost.</p>
+</header>
+
+<section class="headline-number">
+  <div class="big-saved">
+    <span class="saved-figure">~80%</span>
+    <span class="saved-label">est. per-session cost reduction vs. frontier-writes-everything — <em>even reviewing every session</em></span>
+  </div>
+  <p class="number-caveat">Estimate from the pricing model below. Generating a session bills frontier output rates on all code plus repeated context reads; reviewing it is one input-heavy read plus a short critique. No sampling machinery needed at personal/team scale — review 100% and it's still cheap. The internal model's "$0" is <em>no marginal API spend</em>, not free GPUs; the metered gateway is authoritative for judge spend.</p>
+</section>
+
+<section class="how">
+  <h2>How it works</h2>
+  <p class="how-lede">One mode, human-triggered. You're coding with the cheap model and hit a moment of doubt — a design fork, a "tests pass" claim, a finished session you'd like a second pair of eyes on. That moment <em>is</em> the trigger: type a slash command, right in your session. No classifier, no sampling daemon, no gateway changes.</p>
+
+  <div class="streams">
+    <div class="stream">
+      <div class="stream-tag random">ON-DEMAND review</div>
+      <h3>Ask the expensive model</h3>
+      <p>Two commands for two moments: quick advice on the exchange you're staring at, or a full review of the session's work — a sighted packet sent to a strong judge (Opus&nbsp;4.8, or Fable&nbsp;5 for the nasty ones). Review, not re-answer — the judge critiques, the cheap model (or you) revises. Runs in-session, so it always reviews the session you're in.</p>
+      <code class="stream-cmd" style="margin-bottom:6px">/escalate-last&nbsp;&nbsp;# advice on the last exchange</code>
+      <code class="stream-cmd">/escalate-all&nbsp;&nbsp;&nbsp;# full session review, sighted packet</code>
+    </div>
+    <div class="stream">
+      <div class="stream-tag human">SHELVED · future</div>
+      <h3>Automatic sampling</h3>
+      <p>A background sampler judging a random fraction of all sessions (the unbiased org-scale scoreboard) exists in the code but is deliberately out of MVP scope — along with task taxonomies and traffic routing. See <code>docs/sideeye-mvp-scope.md</code>.</p>
+      <code class="stream-cmd">python -m sideeye.sampler  # not the MVP</code>
+    </div>
+  </div>
+
+  <div class="flow">
+    <div class="flow-step">
+      <span class="flow-num">1</span>
+      <strong>Capture</strong>
+      <span>The session becomes a <code>SessionTranscript</code> plus a sighted packet: <code>git diff -U999999</code> of touched files, test output with summary lines intact, and a coverage manifest.</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <span class="flow-num">2</span>
+      <strong>Judge</strong>
+      <span>A Claude model grades it on a rubric: accomplished the ask, correctness, claims-backed-by-evidence, resolution. Execution claims count only if matched to captured output.</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <span class="flow-num">3</span>
+      <strong>Verdict</strong>
+      <span>Score 1–5 + issues w/ severity, version-stamped (adapter, judge, rubric), saved to JSONL. The corpus from daily use is the future evidence base.</span>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <span class="flow-num">4</span>
+      <strong>Cost report</strong>
+      <span>Measured judge spend from the metered gateway vs. the counterfactual frontier baseline.</span>
+    </div>
+  </div>
+</section>
+
+<section class="chart-section">
+  <h2>The money story</h2>
+  <p class="chart-lede">The cost game is decided at the <em>baseline</em> — the model that writes every output token of every turn — not at the review. Generation is output-heavy (the ~5× rate); a review is one input-heavy read. That asymmetry is the whole product, and it holds <em>even at a 100% review rate</em>.</p>
+
+  <div class="chart-controls">
+    <label>Review rate (fraction of sessions you send for review):</label>
+    <input id="samplerate" type="range" min="0" max="100" value="100" step="5">
+    <span id="srate-val" class="mono">100%</span>
+  </div>
+
+  <div class="chart-wrap">
+    <svg id="cumchart" viewBox="0 0 760 380" role="img" aria-label="Cumulative cost over sessions, old baseline versus Side-Eye"></svg>
+    <div class="chart-legend">
+      <span class="leg leg-old"><i></i> Old — Opus 4.8 writes every turn</span>
+      <span class="leg leg-new"><i></i> Side-Eye — cheap model writes, judge reviews</span>
+    </div>
+  </div>
+
+  <p class="chart-foot mono">Assumptions: session grows to ~50k peak context over ~10 turns, ~10k output. Old baseline bills Opus 4.8 ($5/$25 per MTok) on the growing context each turn. Side-Eye bills the internal model at $0 marginal for the work, then the judge reads the sighted packet once (~30k input: flattened transcript + full-context diff + capped test output) at Opus 4.8, plus a short critique out — ~$0.30/review; Fable 5 roughly 2×. Figures are estimates; the metering DB is authoritative.</p>
+</section>
+
+<section class="breakdown">
+  <h2>Per-session breakdown</h2>
+  <div class="table-wrap">
+    <table class="cost-table">
+      <thead>
+        <tr><th>Component</th><th>Old workflow</th><th>Side-Eye</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Generator (writes every turn)</td>
+          <td class="num">~$1.50</td>
+          <td class="num">$0.00</td>
+          <td>Internal model, no marginal API spend; Opus 4.8 re-bills the growing context each turn and bills output at 5× input.</td>
+        </tr>
+        <tr>
+          <td>On-demand review (Opus 4.8, sighted packet)</td>
+          <td class="num">—</td>
+          <td class="num" id="td-sampler">~$0.30</td>
+          <td>One input-heavy read per reviewed session, at the review rate. Fable 5 for the nasty ones, ~2×.</td>
+        </tr>
+        <tr class="total-row">
+          <td>Per session</td>
+          <td class="num">~$1.50</td>
+          <td class="num" id="td-total">~$0.30</td>
+          <td>Even reviewing <em>every</em> session, Side-Eye is ~1/5 the baseline. Below 100%, it only gets cheaper.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="caveats">
+  <h2>What this doesn't prove yet</h2>
+  <ul>
+    <li><strong>The savings are a model, not a measurement.</strong> Real verdicts and metered judge spend replace the estimate. Success = a few weeks of daily use where reviews catch real issues (kept as receipts) and the gateway confirms the cost ratio.</li>
+    <li><strong>The judge reads; it doesn't run.</strong> A tier-1 review catches <em>unsupported</em> claims, not <em>unsound</em> ones — an execution-dependent defect with genuinely passing output in the transcript will be missed. Run the tests yourself; agentic (tier-2) verification is future work.</li>
+    <li><strong>"$0" is marginal, not free.</strong> The internal model runs on GPUs someone pays for. Any org-scale pitch must cost it at loaded GPU rates, not zero.</li>
+    <li><strong>Sessions can contain secrets.</strong> The review packet goes to an external API — fine for self-dogfood; redaction and consent are prerequisites for team-wide rollout.</li>
+    <li><strong>Sampling, taxonomies, and routing are shelved, not rejected.</strong> If the MVP proves out and org-scale routable traffic exists, the verdict corpus grown from daily use is the evidence to revisit them — see <code>docs/sideeye-mvp-scope.md</code>.</li>
+  </ul>
+</section>
+
+<footer class="signoff">
+  <p>Side-Eye MVP · Red Hat MaaS / Praxis · <span class="mono">draft cheap, review expensive</span> · scope of record: <span class="mono">docs/sideeye-mvp-scope.md</span></p>
+</footer>
+
+<style>
+  :root {
+    --ink: #0E1116;
+    --ink-2: #1A1F26;
+    --paper: #F6F5F2;
+    --paper-2: #EEEDE8;
+    --accent: #3B82F6;
+    --accent-warm: #F59E0B;
+    --good: #10B981;
+    --muted: #6B7280;
+    --muted-2: #9CA3AF;
+    --rule: rgba(0,0,0,0.10);
+    --rule-d: rgba(255,255,255,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #F6F5F2;
+      --ink-2: #E3E1DC;
+      --paper: #0E1116;
+      --paper-2: #161B22;
+      --muted: #9CA3AF;
+      --muted-2: #6B7280;
+      --rule: rgba(255,255,255,0.12);
+      --rule-d: rgba(0,0,0,0.30);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #F6F5F2;
+    --ink-2: #E3E1DC;
+    --paper: #0E1116;
+    --paper-2: #161B22;
+    --muted: #9CA3AF;
+    --muted-2: #6B7280;
+    --rule: rgba(255,255,255,0.12);
+    --rule-d: rgba(0,0,0,0.30);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  .masthead, .headline-number, .how, .chart-section, .breakdown, .caveats, .signoff {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  .masthead { padding-top: 72px; padding-bottom: 40px; }
+  .kicker {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+  .masthead h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 500;
+    font-size: clamp(40px, 7vw, 64px);
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+    margin: 0 0 24px;
+    text-wrap: balance;
+    font-variation-settings: "opsz" 120;
+  }
+  .masthead h1 em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--accent);
+  }
+  .lede {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 62ch;
+  }
+  .lede strong { color: var(--ink); }
+
+  .headline-number {
+    padding-top: 40px;
+    padding-bottom: 72px;
+    border-top: 1px solid var(--rule);
+  }
+  .big-saved {
+    display: flex;
+    align-items: baseline;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .saved-figure {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(72px, 14vw, 128px);
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    color: var(--good);
+    font-variation-settings: "opsz" 144;
+  }
+  .saved-label {
+    font-size: 15px;
+    line-height: 1.4;
+    color: var(--muted);
+    max-width: 26ch;
+  }
+  .number-caveat {
+    margin: 24px 0 0;
+    font-size: 14px;
+    color: var(--muted);
+    max-width: 60ch;
+  }
+  .number-caveat em { font-style: italic; }
+
+  h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 500;
+    font-size: 30px;
+    letter-spacing: -0.01em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .how, .chart-section, .breakdown, .caveats { padding-top: 56px; padding-bottom: 16px; border-top: 1px solid var(--rule); }
+  .how-lede, .chart-lede {
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0 0 32px;
+  }
+  .how-lede em, .chart-lede em { font-style: italic; color: var(--ink); }
+
+  .streams {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 40px;
+  }
+  .stream {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 24px;
+  }
+  .stream-tag {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    padding: 4px 9px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 14px;
+  }
+  .stream-tag.random { background: rgba(59,130,246,0.14); color: var(--accent); }
+  .stream-tag.human { background: rgba(245,158,11,0.16); color: var(--accent-warm); }
+  .stream h3 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 500;
+    font-size: 20px;
+    margin: 0 0 8px;
+  }
+  .stream p { margin: 0 0 14px; font-size: 14.5px; color: var(--ink-2); }
+  .stream-cmd {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: block;
+    overflow-x: auto;
+    color: var(--ink);
+  }
+
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .flow-step {
+    flex: 1 1 120px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .flow-step strong { font-size: 14px; }
+  .flow-step span { font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .flow-step code { font-family: "JetBrains Mono", monospace; font-size: 12px; }
+  .flow-num {
+    font-family: "Fraunces", serif;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    color: var(--muted-2);
+    font-size: 18px;
+  }
+
+  .chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+  .chart-controls input[type=range] { width: 180px; accent-color: var(--accent); }
+  #srate-val { font-weight: 500; color: var(--accent); min-width: 42px; }
+
+  .chart-wrap {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 20px 16px 12px;
+  }
+  #cumchart { width: 100%; height: auto; display: block; }
+  .chart-legend {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .leg { display: inline-flex; align-items: center; gap: 7px; }
+  .leg i {
+    width: 14px; height: 3px; border-radius: 2px; display: inline-block;
+  }
+  .leg-old i { background: var(--accent-warm); }
+  .leg-new i { background: var(--accent); }
+  .chart-foot {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 18px 0 0;
+  }
+
+  .table-wrap { overflow-x: auto; }
+  .cost-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .cost-table th, .cost-table td {
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  .cost-table th {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .cost-table td.num {
+    font-family: "JetBrains Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .cost-table td:last-child { color: var(--muted); font-size: 13px; }
+  .total-row td { font-weight: 600; border-bottom: none; }
+  .total-row td.num { color: var(--ink); }
+
+  .caveats ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .caveats li {
+    padding-left: 18px;
+    position: relative;
+    color: var(--ink-2);
+    max-width: 62ch;
+  }
+  .caveats li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 11px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent-warm);
+  }
+  .caveats strong { color: var(--ink); }
+
+  .signoff {
+    padding-top: 56px;
+    padding-bottom: 80px;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .signoff p { margin: 0; }
+
+  @media (max-width: 620px) {
+    .streams { grid-template-columns: 1fr; }
+    .flow-step { flex: 1 1 100%; }
+    .flow-arrow { transform: rotate(90deg); justify-content: center; padding: 2px 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<script>
+(function () {
+  // --- Cost model (matches the page's stated assumptions) ---
+  // All in dollars per session. See <p class="chart-foot"> for the rationale.
+  var OLD_PER = 1.50;        // Opus 4.8 writes every turn (re-billed growing context, 5x output rate)
+  var GLM_BASE = 0.00;       // internal model: no marginal API spend (GPUs are a fixed cost)
+  // Review cost scales with review rate: at 100%, every session gets a sighted review.
+  var REVIEW_FULL = 0.30;    // Opus 4.8 on a ~30k sighted packet (transcript + full-context diff + evidence)
+
+  var svg = document.getElementById('cumchart');
+  var srate = document.getElementById('samplerate');
+  var srateVal = document.getElementById('srate-val');
+  var tdSampler = document.getElementById('td-sampler');
+  var tdTotal = document.getElementById('td-total');
+
+  var W = 760, H = 380;
+  var M = { l: 56, r: 24, t: 20, b: 44 };
+  var pw = W - M.l - M.r, ph = H - M.t - M.b;
+
+  function el(name, attrs) {
+    var e = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function fmt(n) {
+    if (n >= 1000) return '$' + (n / 1000).toFixed(1) + 'k';
+    if (n >= 1) return '$' + n.toFixed(0);
+    return '$' + n.toFixed(2);
+  }
+
+  function draw(rateFrac) {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var sessions = 40;
+    var newPer = GLM_BASE + REVIEW_FULL * rateFrac;
+    var oldCum = [], newCum = [];
+    var maxV = 0;
+    for (var i = 0; i <= sessions; i++) {
+      var oc = OLD_PER * i;
+      var nc = newPer * i;
+      oldCum.push(oc); newCum.push(nc);
+      if (oc > maxV) maxV = oc;
+    }
+    // round Y max up to a nice number
+    var yMax = Math.ceil(maxV / 10) * 10;
+
+    function x(i) { return M.l + (i / sessions) * pw; }
+    function y(v) { return M.t + ph - (v / yMax) * ph; }
+
+    // gridlines + y labels
+    var ticks = 5;
+    for (var t = 0; t <= ticks; t++) {
+      var val = (yMax / ticks) * t;
+      var gy = y(val);
+      svg.appendChild(el('line', {
+        x1: M.l, x2: M.l + pw, y1: gy, y2: gy,
+        stroke: 'var(--rule)', 'stroke-width': 1
+      }));
+      var lab = el('text', {
+        x: M.l - 10, y: gy + 4, 'text-anchor': 'end',
+        'font-family': 'JetBrains Mono, monospace', 'font-size': 10, fill: 'var(--muted)'
+      });
+      lab.textContent = fmt(val);
+      svg.appendChild(lab);
+    }
+
+    // x labels
+    [0, 10, 20, 30, 40].forEach(function (i) {
+      var lab = el('text', {
+        x: x(i), y: M.t + ph + 20, 'text-anchor': 'middle',
+        'font-family': 'JetBrains Mono, monospace', 'font-size': 10, fill: 'var(--muted)'
+      });
+      lab.textContent = i;
+      svg.appendChild(lab);
+    });
+    var xax = el('text', {
+      x: M.l + pw / 2, y: H - 6, 'text-anchor': 'middle',
+      'font-family': 'Inter, sans-serif', 'font-size': 11, fill: 'var(--muted)'
+    });
+    xax.textContent = 'sessions';
+    svg.appendChild(xax);
+
+    function pathFor(arr) {
+      var d = '';
+      for (var i = 0; i < arr.length; i++) {
+        d += (i === 0 ? 'M' : 'L') + x(i).toFixed(1) + ' ' + y(arr[i]).toFixed(1) + ' ';
+      }
+      return d;
+    }
+
+    // area fill under old (the "cost being avoided")
+    var areaD = pathFor(oldCum) + 'L' + x(sessions).toFixed(1) + ' ' + y(0).toFixed(1) +
+                ' L' + x(0).toFixed(1) + ' ' + y(0).toFixed(1) + ' Z';
+    svg.appendChild(el('path', { d: areaD, fill: 'var(--accent-warm)', 'fill-opacity': 0.08, stroke: 'none' }));
+
+    // old line
+    svg.appendChild(el('path', {
+      d: pathFor(oldCum), fill: 'none', stroke: 'var(--accent-warm)', 'stroke-width': 2.5,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+    }));
+    // new line
+    svg.appendChild(el('path', {
+      d: pathFor(newCum), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2.5,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+    }));
+
+    // endpoint dots + labels
+    function endpoint(arr, color, anchor) {
+      var i = arr.length - 1;
+      svg.appendChild(el('circle', { cx: x(i), cy: y(arr[i]), r: 3.5, fill: color }));
+      var lab = el('text', {
+        x: x(i) - 8, y: y(arr[i]) - 8, 'text-anchor': anchor,
+        'font-family': 'JetBrains Mono, monospace', 'font-size': 11, 'font-weight': 500, fill: color
+      });
+      lab.textContent = fmt(arr[i]);
+      svg.appendChild(lab);
+    }
+    endpoint(oldCum, 'var(--accent-warm)', 'end');
+    endpoint(newCum, 'var(--accent)', 'end');
+
+    // savings gap label at the right edge
+    var gapY = (y(oldCum[sessions]) + y(newCum[sessions])) / 2;
+    var gap = el('text', {
+      x: x(sessions) - 8, y: gapY + 3, 'text-anchor': 'end',
+      'font-family': 'Inter, sans-serif', 'font-size': 11, 'font-weight': 600, fill: 'var(--good)'
+    });
+    gap.textContent = 'saved ' + fmt(oldCum[sessions] - newCum[sessions]);
+    svg.appendChild(gap);
+  }
+
+  function update() {
+    var pct = parseInt(srate.value, 10);
+    var frac = pct / 100;
+    srateVal.textContent = pct + '%';
+    var reviewPer = REVIEW_FULL * frac;
+    var total = GLM_BASE + reviewPer;
+    tdSampler.textContent = frac > 0 ? '~$' + reviewPer.toFixed(2) : '—';
+    tdTotal.textContent = '~$' + total.toFixed(2);
+    draw(frac);
+  }
+
+  srate.addEventListener('input', update);
+  update();
+})();
+</script>

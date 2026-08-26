@@ -17,6 +17,9 @@
 #     skips the classifier and still gates dangerous actions.
 #   - CLAUDE_CODE_USE_VERTEX/etc. blanked: avoids "Not logged in" when your shell
 #     exports Vertex vars.
+#   - CLAUDE_CODE_AUTO_COMPACT_WINDOW=245760: Claude Code assumes a 200K window
+#     for unknown models and auto-compacts at ~90% of it (~165K input); the box
+#     serves 262144. 240K (served minus 16K headroom) delays compaction ~35%.
 # Cost is $0 (metered as model=Qwen3.8-27B-FP8, provider=vllm). The GPU box must
 # be running — if it's stopped to save cost, requests fail until it's started.
 set -euo pipefail
@@ -34,9 +37,10 @@ SETTINGS=$(cat <<JSON
   "CLOUD_ML_REGION":"",
   "ANTHROPIC_BASE_URL":"$UNIFIED_ROUTE",
   "ANTHROPIC_API_KEY":"$MAAS_API_KEY",
-  "ANTHROPIC_SMALL_FAST_MODEL":"$MODEL"
+  "ANTHROPIC_SMALL_FAST_MODEL":"$MODEL",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW":"245760"
 },"model":"$MODEL","effortLevel":"xhigh",
-"permissions":{"defaultMode":"acceptEdits","disableAutoMode":"disable"}}
+"permissions":{"defaultMode":"acceptEdits","disableAutoMode":"disable","deny":["WebSearch","WebFetch"]}}
 JSON
 )
 

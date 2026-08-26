@@ -63,3 +63,18 @@ def test_first_user_ask():
 def test_render_includes_turns():
     r = render(_t())
     assert "USER:" in r and "do X" in r and "ASSISTANT:" in r and "did X" in r
+
+
+def test_touched_files_default_empty():
+    t = _t()
+    assert t["touched_files"] == []
+
+
+def test_touched_files_validated():
+    with pytest.raises(TranscriptError):
+        make_transcript(session_id="s", source="x",
+                        turns=[{"role": "user", "text": "hi"}],
+                        touched_files=[{"no_path": True}])
+    # a valid touched_files list round-trips
+    t = _t(touched_files=[{"path": "/x.py", "count": 2}])
+    assert t["touched_files"] == [{"path": "/x.py", "count": 2}]

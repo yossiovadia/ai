@@ -1,0 +1,24 @@
+# Packaging for the `sideeye` tool. Install editable from this dir:
+#   pip install -e sideeye/     (or, from here: pip install -e .)
+# yields a `sideeye` command:  sideeye review | sideeye advise
+#
+# Editable install is the intended mode — __file__ then points at this source
+# tree, so the bundled rubric/*.md are found without extra package-data wiring.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sideeye"
+version = "0.1.0"
+description = "Side-Eye — on-demand session review (draft cheap, review expensive)"
+requires-python = ">=3.10"
+dependencies = ["requests"]
+
+[project.scripts]
+sideeye = "sideeye.cli:main"
+
+[tool.setuptools]
+# This pyproject lives inside the package dir, so map the `sideeye` package to "."
+package-dir = { "sideeye" = "." }
+packages = ["sideeye", "sideeye.judge", "sideeye.adapters"]

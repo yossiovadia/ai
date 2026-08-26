@@ -47,15 +47,24 @@ def counterfactual_cost(rec, model):
 
 
 def summarize(sampled, counterfactual_model):
-    n = len(sampled)
+    # Partition by adapter_version: blind (v0, narrative-only) and sighted
+    # (v1, code-aware) verdicts are NOT commensurable — a narrative-only score
+    # and a code-aware score measure different things. Pooling them corrupts the
+    # aggregate. Absence (pre-fix records) is treated as v0-blind. We report the
+    # sighted aggregate as the headline; blind verdicts are shown as a separate
+    # note so the user knows they exist and must not be mixed in.
+    blind = [r for r in sampled if r.get("adapter_version", "v0-blind") == "v0-blind"]
+    sighted = [r for r in sampled if r.get("adapter_version") == "v1-sighted"]
+    cohort = sighted if sighted else sampled  # fall back to all if none sighted yet
+    n = len(cohort)
     if n == 0:
         return None
-    total_cf = sum(counterfactual_cost(r, counterfactual_model) for r in sampled)
-    total_judge = sum(r.get("judge_cost_usd", 0.0) for r in sampled)
-    total_gen_tokens = sum(r.get("generation_total_tokens", 0) for r in sampled)
-    scores = [r["score"] for r in sampled if isinstance(r.get("score"), int)]
+    total_cf = sum(counterfactual_cost(r, counterfactual_model) for r in cohort)
+    total_judge = sum(r.get("judge_cost_usd", 0.0) for r in cohort)
+    total_gen_tokens = sum(r.get("generation_total_tokens", 0) for r in cohort)
+    scores = [r["score"] for r in cohort if isinstance(r.get("score"), int)]
     avg_score = sum(scores) / len(scores) if scores else 0.0
-    major = sum(1 for r in sampled if r.get("overall_severity") in ("major", "critical"))
+    major = sum(1 for r in cohort if r.get("overall_severity") in ("major", "critical"))
     return {
         "sessions": n,
         "counterfactual_model": counterfactual_model,
@@ -66,6 +75,8 @@ def summarize(sampled, counterfactual_model):
         "generation_tokens": total_gen_tokens,
         "avg_score": avg_score,
         "major_issue_rate": major / n,
+        "adapter_version": "v1-sighted" if sighted else "v0-blind",
+        "blind_excluded": len(blind) if sighted else 0,  # blind verdicts NOT in this aggregate
     }
 
 
@@ -93,6 +104,9 @@ def print_report(summary, escalated):
         print("  " + "-" * 62)
         print(f"  ESTIMATED SAVINGS                      {_fmt_usd(s['savings'])}")
         print("=" * 66)
+        if s.get("blind_excluded"):
+            print(f"  ({s['blind_excluded']} blind-era verdicts excluded from this "
+                  f"aggregate — adapter {s['adapter_version']}; not commensurable)")
     if escalated:
         print(f"\n  Escalations (separate stream, {len(escalated)} — defect discovery, "
               "not in the aggregate):")
