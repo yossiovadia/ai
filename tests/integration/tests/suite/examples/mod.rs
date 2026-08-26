@@ -18,6 +18,7 @@ mod guardrails;
 mod identity_header_guard;
 mod jwt_auth;
 mod mcp_broker;
+mod model_catalog;
 mod model_to_header;
 mod openai_conversations;
 mod openai_doc_extract;
