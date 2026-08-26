@@ -226,6 +226,27 @@ data:
             cache_ttl_seconds: 300
             timeout_seconds: 5
 
+          # Answer GET /v1/models from static config so the client model picker
+          # sees the local Qwen + the Claude models (a real Anthropic /v1/models
+          # wouldn't list the self-hosted Qwen). Discovery only — access is still
+          # enforced by model_access below. Anthropic format: this is the
+          # Anthropic-dialect route. Other requests pass through untouched.
+          - filter: model_catalog
+            format: anthropic
+            path: /v1/models
+            models:
+              - id: Qwen3.8-27B-FP8
+                display_name: "Qwen3.8-27B-FP8 (self-hosted, $0)"
+                owned_by: vllm
+              - id: claude-opus-4-8
+                display_name: "Claude Opus 4.8"
+              - id: claude-sonnet-5
+                display_name: "Claude Sonnet 5"
+              - id: claude-haiku-4-5-20251001
+                display_name: "Claude Haiku 4.5"
+              - id: claude-fable-5
+                display_name: "Claude Fable 5 (octo-eng only)"
+
           - filter: model_access
             mode: denylist
             models:
