@@ -8,8 +8,8 @@ use praxis_filter::FilterRegistry;
 
 use crate::{
     A2aFilter, AiGuardrailsFilter, ApiKeyAuthFilter, ExternalMeteringFilter, IdentityHeaderGuardFilter,
-    IntelligentRouteFilter, JwtAuthFilter, McpFilter, ModelAccessFilter, ModelToHeaderFilter, PromptEnrichFilter,
-    TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
+    IntelligentRouteFilter, JwtAuthFilter, McpFilter, ModelAccessFilter, ModelCatalogFilter, ModelToHeaderFilter,
+    PromptEnrichFilter, TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
 };
 
 /// Register all in-tree AI HTTP filters into `registry`.
@@ -93,6 +93,10 @@ fn register_general_ai_filters(registry: &mut FilterRegistry) {
     praxis_filter::register_filters!(
         @register registry,
         http "model_access" => ModelAccessFilter::from_config
+    );
+    praxis_filter::register_filters!(
+        @register registry,
+        http "model_catalog" => ModelCatalogFilter::from_config
     );
     praxis_filter::register_filters!(
         @register registry,
