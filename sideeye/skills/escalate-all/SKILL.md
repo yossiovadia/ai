@@ -11,12 +11,18 @@ Get a real, independent review of THIS session from the strong judge.
 
 ## What to do
 
-Run exactly this command, with a **generous Bash timeout (≥ 300000 ms)** — a
+Run this command, with a **generous Bash timeout (≥ 300000 ms)** — a
 full-session judge call can take a few minutes:
 
 ```
 sideeye review --current --yes
 ```
+
+**If the user typed any arguments after `/escalate-all`, append them verbatim to
+that command.** For example `/escalate-all --model=fable` becomes
+`sideeye review --current --yes --model=fable`. The `--model` flag accepts short
+aliases (`fable`, `opus`, `sonnet`) as well as full ids. Pass the user's args
+through unchanged; do not invent flags they didn't type.
 
 Then:
 

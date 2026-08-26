@@ -91,3 +91,19 @@ def session_files(client, scope="all"):
 def latest_session(client, scope="all"):
     files = session_files(client, scope)
     return files[-1] if files else None
+
+
+def resolve_current_session(client):
+    """Best-effort "the session I'm in", robust to a drifted shell cwd.
+
+    Tries the current project (cwd) first — precise when the shell is actually in
+    the session's dir. But a skill's Bash tool can run from a stale cwd (e.g.
+    /tmp), where the cwd-project has no sessions and a naive lookup fails. In that
+    case fall back to the globally most-recently-WRITTEN session, which is the one
+    actively being appended to — i.e. the session you're in.
+
+    Returns (path_or_None, fell_back_bool) so the caller can note the fallback."""
+    s = latest_session(client, scope="cwd")
+    if s:
+        return s, False
+    return latest_session(client, scope="all"), True

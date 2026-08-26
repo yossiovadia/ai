@@ -24,7 +24,7 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from sideeye.adapters import latest_session, load_transcript  # noqa: E402
+from sideeye.adapters import latest_session, load_transcript, resolve_current_session  # noqa: E402
 from sideeye.judge.judge import (  # noqa: E402
     advise as run_advise,
     build_advice_body,
@@ -32,6 +32,7 @@ from sideeye.judge.judge import (  # noqa: E402
     judge_route_guard,
     load_rubric,
     resolve_judge_route,
+    resolve_model,
 )
 from sideeye.judge.transcript import last_exchange  # noqa: E402
 
@@ -68,6 +69,7 @@ def main():
     # can't route the expensive review to the cheap model. --base-url overrides.
     ap.add_argument("--base-url", default=None)
     args = ap.parse_args()
+    args.model = resolve_model(args.model)   # accept fable/opus/sonnet aliases
 
     env_base, api_key = resolve_judge_route()
     args.base_url = args.base_url or env_base
@@ -86,8 +88,11 @@ def main():
         rollout = latest_session(args.client, scope="all")
     elif args.project:
         rollout = latest_session(args.client, scope=args.project)
-    else:  # --current or default
-        rollout = latest_session(args.client, scope="cwd")
+    else:  # --current or default — robust to a drifted shell cwd
+        rollout, fell_back = resolve_current_session(args.client)
+        if fell_back and rollout:
+            print(f"(cwd has no {args.client} session; using the most recently "
+                  "active session instead)")
     if not rollout or not rollout.exists():
         fail(f"no {args.client} session found (run from the session's project dir, "
              "or pass --rollout / --all-projects)")
