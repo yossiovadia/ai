@@ -10,12 +10,23 @@ capture-agnostic.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 
 from sideeye.adapters import claude_code, codex_rollout
 
 CLAUDE_DIR = pathlib.Path.home() / ".claude" / "projects"
 CODEX_DIR = pathlib.Path.home() / ".codex" / "sessions"
+
+
+def claude_project_dir(cwd=None):
+    """The ~/.claude/projects/<mangled-cwd> dir for a given cwd (default: os.getcwd).
+
+    Claude Code mangles the cwd into a dirname by replacing '/' with '-'
+    (e.g. /Users/x/proj -> -Users-x-proj). One project dir per cwd.
+    """
+    cwd = cwd or os.getcwd()
+    return CLAUDE_DIR / cwd.replace("/", "-")
 
 
 def load_transcript(path):
@@ -42,18 +53,41 @@ def load_transcript(path):
     return codex_rollout.parse_rollout(path) or claude_code.parse_session(path)
 
 
-def session_files(client):
-    """List candidate session files for a client, oldest -> newest by mtime."""
+def session_files(client, scope="all"):
+    """List candidate session files for a client, oldest -> newest by mtime.
+
+    scope:
+      "all"     — every project (claude) / every session (codex). Default, so the
+                  sampler still scans across projects unchanged.
+      "cwd"     — claude only: only the current working directory's project dir.
+                  Use this for "the session I'm in", not the global latest (which
+                  is a coin flip across all live projects).
+      <string>  — a specific project dirname under ~/.claude/projects/, or a path.
+    """
     if client == "codex":
         files = CODEX_DIR.rglob("rollout-*.jsonl")
-    elif client == "claude":
-        # Top-level session files only (skip nested subagents/ transcripts).
-        files = (p for p in CLAUDE_DIR.glob("*/*.jsonl"))
-    else:
+        return sorted(files, key=lambda p: p.stat().st_mtime)
+    if client != "claude":
         raise ValueError(f"unknown client: {client!r} (use 'claude' or 'codex')")
-    return sorted(files, key=lambda p: p.stat().st_mtime)
+
+    if scope == "all":
+        files = CLAUDE_DIR.glob("*/*.jsonl")
+    elif scope == "cwd":
+        pdir = claude_project_dir()
+        files = pdir.glob("*.jsonl") if pdir.exists() else []
+    else:
+        pdir = pathlib.Path(scope)
+        if not pdir.is_absolute():
+            pdir = CLAUDE_DIR / scope
+        files = pdir.glob("*.jsonl") if pdir.exists() else []
+    # Top-level session files only — skip nested subagents/ transcripts, which
+    # live at <project>/<session-uuid>/subagents/*.jsonl.
+    return sorted(
+        (p for p in files if "subagents" not in p.parts),
+        key=lambda p: p.stat().st_mtime,
+    )
 
 
-def latest_session(client):
-    files = session_files(client)
+def latest_session(client, scope="all"):
+    files = session_files(client, scope)
     return files[-1] if files else None

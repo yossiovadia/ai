@@ -11,9 +11,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from sideeye.cost_report import counterfactual_cost, summarize  # noqa: E402
 
 
-def _rec(gen_in, gen_out, judge_cost, score, severity="none"):
-    return {
-        "session_id": f"s-{gen_in}-{gen_out}",
+def _rec(gen_in, gen_out, judge_cost, score, severity="none", adapter_version=None):
+    r = {
+        "session_id": f"s-{gen_in}-{gen_out}-{severity}",
         "generation_input_tokens": gen_in,
         "generation_output_tokens": gen_out,
         "generation_total_tokens": gen_in + gen_out,
@@ -21,6 +21,9 @@ def _rec(gen_in, gen_out, judge_cost, score, severity="none"):
         "score": score,
         "overall_severity": severity,
     }
+    if adapter_version:
+        r["adapter_version"] = adapter_version
+    return r
 
 
 def test_counterfactual_cost_sonnet5():
@@ -52,3 +55,27 @@ def test_summarize_savings_and_quality():
 
 def test_summarize_empty():
     assert summarize([], "claude-sonnet-5") is None
+
+
+def test_blind_and_sighted_never_pool():
+    """Blind (v0) and sighted (v1) verdicts measure different things — pooling
+    them corrupts the aggregate. The sighted cohort is the headline; blind
+    verdicts are counted as excluded, not mixed in."""
+    recs = [
+        _rec(1_000_000, 0, 0.02, 5, "none", adapter_version="v1-sighted"),
+        _rec(1_000_000, 0, 0.02, 2, "critical", adapter_version="v0-blind"),
+    ]
+    s = summarize(recs, "claude-sonnet-5")
+    assert s["sessions"] == 1                    # only the sighted one
+    assert s["avg_score"] == 5                   # the blind 2-score is NOT pooled in
+    assert s["blind_excluded"] == 1
+    assert s["adapter_version"] == "v1-sighted"
+
+
+def test_blind_records_implicitly_v0_when_field_absent():
+    """Pre-fix records have no adapter_version field. They must be treated as
+    v0-blind, and (when no sighted records exist) reported honestly as v0."""
+    recs = [_rec(1_000_000, 0, 0.02, 4)]  # no adapter_version field
+    s = summarize(recs, "claude-sonnet-5")
+    assert s["adapter_version"] == "v0-blind"
+    assert s["blind_excluded"] == 0   # nothing excluded — the cohort IS blind

@@ -23,6 +23,12 @@ source "$HERE/qwen-gpu.env"
 # /model can switch between Qwen and Claude in-session. Falls back to the
 # qwen-only route if UNIFIED_ROUTE isn't set.
 ROUTE="${UNIFIED_ROUTE:-${QWEN_ROUTE:?set UNIFIED_ROUTE or QWEN_ROUTE in qwen-gpu.env}}"
+# Judge isolation: any `sideeye review/advise` run from THIS session inherits the
+# shell env (Bash tool subprocesses do). Export the dedicated judge route so the
+# reviewer hits the REAL Claude route (JUDGE_ROUTE), never the cheap model this
+# session is pointed at. This is what stops "expensive review" self-routing to Qwen.
+export SIDEEYE_JUDGE_BASE_URL="${JUDGE_ROUTE:?set JUDGE_ROUTE (real Claude route) in qwen-gpu.env}"
+export SIDEEYE_JUDGE_API_KEY="$MAAS_API_KEY"
 # Must EXACTLY match vLLM's --served-model-name (qwen-vllm.service) AND the
 # model_pricing row, or vLLM 400s (unknown model) or the gateway bills the
 # $15/M default (no $0 pricing row). All three are "Qwen3.8-27B-FP8".
@@ -41,9 +47,10 @@ SETTINGS=$(cat <<JSON
   "ANTHROPIC_DEFAULT_SONNET_MODEL":"",
   "ANTHROPIC_DEFAULT_OPUS_MODEL":"",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL":"",
-  "ANTHROPIC_SMALL_FAST_MODEL":"$MODEL"
+  "ANTHROPIC_SMALL_FAST_MODEL":"$MODEL",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW":"245760"
 },"model":"$MODEL","effortLevel":"xhigh",
-"permissions":{"defaultMode":"acceptEdits","disableAutoMode":"disable"}}
+"permissions":{"defaultMode":"acceptEdits","disableAutoMode":"disable","deny":["WebSearch","WebFetch"]}}
 JSON
 )
 # effortLevel "xhigh": the model's full-reasoning default. We only override at all
@@ -60,6 +67,23 @@ JSON
 # edits + safe Bash (no classifier) and still prompts for genuinely dangerous
 # actions; disableAutoMode removes auto from the cycle so it can't be re-enabled
 # and start hitting the classifier again. Pass --permission-mode to override.
+#
+# permissions.deny [WebSearch, WebFetch]: those are Anthropic SERVER-side tools;
+# their content blocks (server_tool_use / web_search_tool_result) aren't
+# implemented by vLLM, so a "check the web" request 500s ("Unexpected item type
+# in content") AND poisons the session (the bad block replays on every retry).
+# Qwen has no web access anyway. deny removes the tools from the agent's context
+# entirely, so it never attempts them.
+#
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW 245760: Claude Code doesn't recognize
+# Qwen3.8-27B-FP8 and assumes a 200K window for unknown models, so auto-compact
+# fires at ~90% of that (~165K input — verified in the metering DB: the
+# compaction call metered 165266 in + 14764 out = 90.0% of 200K), long before
+# the 262144 vLLM actually serves. 245760 (240K = served limit minus 16K
+# headroom for the summary) pushes the trigger to ~220K. Set HERE, not in
+# ~/.zshrc: the zshrc value is GLM-tuned (273672 — above Qwen's served ceiling,
+# a context-overflow 400 if inherited) and shell env doesn't reliably reach
+# the claude process anyway.
 
 echo "Claude Code -> dogfood praxis (unified route) -> Qwen3.8-27B-FP8 (\$0) | /model for Claude"
 echo "Metered on the dogfood dashboard."
