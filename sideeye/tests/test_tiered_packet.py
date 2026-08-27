@@ -127,6 +127,28 @@ def test_fit_packet_tiers_a_huge_session_and_keeps_all_human(monkeypatch):
     assert toks + E.DEFAULT_MAX_TOKENS + E._SAFETY_TOKENS <= 200_000
 
 
+def test_fit_packet_converges_in_few_calls(monkeypatch):
+    # P4.3: estimate-then-verify must fit a big overflowing session in a HANDFUL of
+    # count_tokens calls, not the ~10-20 of the old binary search (each of which
+    # re-uploaded the packet + stamped a phantom 0/0 metering row).
+    calls = {"n": 0}
+    def counting_tokmodel(*a, **k):
+        calls["n"] += 1
+        return _tokmodel(*a, **k)
+    monkeypatch.setattr(E, "estimate_cost", counting_tokmodel)
+    turns = [{"role": "user", "text": "SPEC"}]
+    for i in range(400):                      # ~1.6M chars ≈ 400k tok — well over 200k
+        turns.append({"role": "assistant", "text": f"n{i} " + "x" * 4000})
+        if i % 4 == 0:
+            turns.append({"role": "tool", "text": f"t{i} " + "y" * 900})
+    t = _t(turns)
+    produced, toks, *_r, cov = E._fit_packet(
+        t, "SPEC", _no_diff, "RUBRIC", base_url="https://x", api_key="k", model="claude-fable-5")
+    assert cov is not None                                    # tiered
+    assert toks + E.DEFAULT_MAX_TOKENS + E._SAFETY_TOKENS <= 200_000   # fits
+    assert calls["n"] <= E._MAX_FIT_ITERS + 1, f"{calls['n']} count_tokens calls (want ≤ few)"
+
+
 def test_fit_packet_degrades_the_diff_when_transcript_floor_isnt_enough(monkeypatch):
     # Small transcript, but the full diff overflows on its own. The diff-overflow
     # rung must shrink the diff (respecting budget) and fit, flagging degradation.

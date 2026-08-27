@@ -61,7 +61,7 @@ from sideeye.record import (  # noqa: E402
 # wrapping. Fail-closed — we'd rather tier one notch further than eat a 400.
 _SAFETY_TOKENS = 3000
 _INEXACT_EXTRA_MARGIN = 12000   # extra headroom when count_tokens is unavailable
-_MAX_FIT_PROBES = 10            # binary-search probes (free count_tokens) to fill the window
+_MAX_FIT_ITERS = 4              # estimate-then-verify iterations (converges in 1-2; free count_tokens)
 # A full session review verdict (summary + several issues, each with a
 # description) needs more output room than the 1024 default — a truncated
 # record_verdict drops a required field and forces the retry. Give it headroom.
@@ -116,86 +116,76 @@ def _fit_packet(transcript, asked, make_diff, rubric_text, *, base_url, api_key,
         # extra headroom when count_tokens is unavailable and we're on a chars/4 guess.
         return max_tokens + _SAFETY_TOKENS + (0 if exact else _INEXACT_EXTRA_MARGIN)
 
-    def assemble(transcript_text, diff):
+    def measure(transcript_text, diff):
+        # One free count_tokens round-trip for a candidate packet. Returns the
+        # built packet + its REAL token count (+ cost/exact/reason).
         produced = transcript_text + (("\n\n" + diff) if diff else "")
         body = build_request_body(rubric_text, asked, produced, model=model)
-        input_tokens, est_cost, exact, reason = estimate_cost(base_url, api_key, body, model)
-        return (input_tokens + margin(exact) <= window), (produced, input_tokens, est_cost, exact, reason)
+        it, ec, ex, rs = estimate_cost(base_url, api_key, body, model)
+        return produced, it, ec, ex, rs
 
     full_text = render(transcript)
-
-    def search(diff, diff_degraded):
-        # Find the LARGEST transcript char budget that still fits, so we USE the
-        # window (keep tool-result evidence + recent narration) rather than
-        # over-shrinking. chars/4 underestimates token-dense content, so we
-        # converge on the real (exact) count. Test the floor (budget 0) FIRST —
-        # if even that overflows, this diff can't be used at all; otherwise binary-
-        # search upward from it for the most transcript that fits.
-        floor_text, floor_cov = render_budgeted(transcript, 0)
-        fits, result = assemble(floor_text, diff)
-        if not fits:
-            return None
-        best = (*result, {**floor_cov, "diff_degraded": diff_degraded})
-        lo, hi = 1, len(full_text)
-        for _ in range(_MAX_FIT_PROBES):
-            if lo > hi:
-                break
-            mid = (lo + hi) // 2
-            transcript_text, coverage = render_budgeted(transcript, mid)
-            fits, result = assemble(transcript_text, diff)
-            if fits:
-                best = (*result, {**coverage, "diff_degraded": diff_degraded})
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return best
-
-    # 1) Try the FULL packet. Normal sessions fit and ship whole, exactly as before.
     full_diff = make_diff()
-    fits, result = assemble(full_text, full_diff)
-    if fits:
-        return (*result, None)
 
-    # 2) Overflow → salience-tiered degrade with the full diff kept intact.
-    best = search(full_diff, diff_degraded=False)
-    if best is not None:
-        return best
+    def fit_transcript_to(diff):
+        # Estimate-then-verify: trim the transcript (render_budgeted keeps human +
+        # final turn, then tool-result EVIDENCE, then narration) so transcript+diff
+        # fits the window. Each measurement gives the REAL chars/token, so we jump
+        # to the budget and verify — converging in 1-2 calls, vs a ~10-probe binary
+        # search that re-uploaded the multi-MB packet each time (latency + a phantom
+        # 0/0 metering row per probe). Returns (produced,it,ec,ex,rs,coverage);
+        # coverage is None if the FULL transcript fit. Returns None if even the
+        # floor (all human turns) + diff overflows.
+        produced, it, ec, ex, rs = measure(full_text, diff)
+        if it + margin(ex) <= window:
+            return produced, it, ec, ex, rs, None
+        cov = None
+        for _ in range(_MAX_FIT_ITERS):
+            target = window - margin(ex)
+            cpt = len(produced) / max(it, 1)                    # real chars/token, this packet
+            diff_chars = len("\n\n" + diff) if diff else 0
+            tx_budget = max(1, int((len(produced) - diff_chars) - (it - target) * cpt * 1.05))
+            text, cov = render_budgeted(transcript, tx_budget)
+            produced, it, ec, ex, rs = measure(text, diff)
+            if it + margin(ex) <= window:
+                return produced, it, ec, ex, rs, cov
+            if not cov["fits"]:
+                return None                                     # floor+diff overflows → shrink diff
+        return None
 
-    # 3) Even the transcript floor + full diff overflows → the diff is too big.
-    # Degrade the diff GLOBALLY (drop least-edited files to manifest-only) so the
-    # most-edited code still gets reviewed. Budget by MEASURED tokens, not a char
-    # ratio: code diffs tokenize ~2.5 chars/token (dense), so a chars/4 budget
-    # overshoots. Binary-search the largest diff that fits with the sacred floor;
-    # make_diff is cheap now (git ran once), so this is just count_tokens probes.
-    floor_text = render_budgeted(transcript, 0)[0]
-    floor_fits, (_, floor_tokens, *_r) = assemble(floor_text, None)
-    if not floor_fits:
+    # 1) Full diff: ship whole if it fits, else tier the transcript to it.
+    r = fit_transcript_to(full_diff)
+    if r is not None:
+        produced, it, ec, ex, rs, cov = r
+        return produced, it, ec, ex, rs, (None if cov is None else {**cov, "diff_degraded": False})
+
+    # 2) Even the floor + full diff overflows → the diff is too big. Size it down to
+    # the room left after the sacred floor (estimate-then-verify; aim UNDER so
+    # make_diff's whole-file drops land below the window, not on the edge), then
+    # regrow the transcript into any remaining room so tool evidence isn't lost.
+    floor_text, floor_cov = render_budgeted(transcript, 0)
+    produced, floor_tokens, ec, ex, rs = measure(floor_text, None)
+    if floor_tokens + margin(ex) > window:
         fail(f"the human turns alone are ~{floor_tokens:,} tokens vs {model}'s {window:,} "
              "window — this session is too large to review in one call even narrative-only. "
              "Escalate a shorter/fresher session or a narrower scope.")
-
     if full_diff is not None:
-        lo, hi, best_diff = 0, len(full_diff), make_diff(0)   # 0 = manifest-only floor
-        for _ in range(_MAX_FIT_PROBES):
-            if lo > hi:
-                break
-            mid = (lo + hi) // 2
-            candidate = make_diff(mid)
-            fits, _res = assemble(floor_text, candidate)
-            if fits:
-                best_diff, lo = candidate, mid + 1
-            else:
-                hi = mid - 1
-        # With the largest fitting diff fixed, fill the rest of the window with
-        # transcript tiers (tool evidence, then narration).
-        best = search(best_diff, diff_degraded=len(best_diff) < len(full_diff))
-        if best is not None:
-            return best
+        cpt_diff = 2.6                                          # dense; refined from real counts
+        for _ in range(_MAX_FIT_ITERS):
+            room = window - margin(True) - floor_tokens
+            d = make_diff(max(0, int(room * cpt_diff * 0.95)))
+            produced, it, ec, ex, rs = measure(floor_text, d)
+            if it + margin(ex) <= window:
+                grown = fit_transcript_to(d)                    # refill tool evidence into headroom
+                if grown is not None:
+                    p, i, e, x, rr, cov = grown
+                    return p, i, e, x, rr, {**(cov or floor_cov), "diff_degraded": len(d) < len(full_diff)}
+                return produced, it, ec, ex, rs, {**floor_cov, "diff_degraded": len(d) < len(full_diff)}
+            cpt_diff = len(d) / max(it - floor_tokens, 1)       # recalibrate from measurement
 
-    # 4) No diff and the floor still doesn't fit shouldn't reach here (floor_fits
-    # was checked), but guard anyway rather than ship an over-budget packet.
-    fail(f"cannot fit the packet into {model}'s {window:,} window. Re-run with --no-code "
-         "for a narrative-only review, or narrow the change set.")
+    # 3) Can't fit even the reduced diff → refuse rather than ship over-budget.
+    fail(f"cannot fit the packet into {model}'s {window:,} window even with the diff "
+         "reduced. Re-run with --no-code for a narrative-only review, or narrow the change set.")
 
 
 def main():
