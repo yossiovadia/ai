@@ -10,7 +10,7 @@
 # Both speak the Anthropic Messages API natively, so no translation. Starts on
 # Qwen ($0); /model to Claude when you want it (subject to the Anthropic cap).
 #
-# Reads MAAS_API_KEY + UNIFIED_ROUTE (or QWEN_ROUTE) from qwen-gpu.env
+# Reads MAAS_API_KEY + UNIFIED_ROUTE from qwen-gpu.env
 # (gitignored). Uses --settings to override the Vertex config your
 # ~/.claude/settings.json forces on.
 set -euo pipefail
@@ -19,16 +19,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$HERE/qwen-gpu.env"
 : "${MAAS_API_KEY:?MAAS_API_KEY not in qwen-gpu.env}"
-# Prefer the UNIFIED Anthropic-dialect route (one URL, model-based routing) so
-# /model can switch between Qwen and Claude in-session. Falls back to the
-# qwen-only route if UNIFIED_ROUTE isn't set.
-ROUTE="${UNIFIED_ROUTE:-${QWEN_ROUTE:?set UNIFIED_ROUTE or QWEN_ROUTE in qwen-gpu.env}}"
-# Judge isolation: any `sideeye review/advise` run from THIS session inherits the
-# shell env (Bash tool subprocesses do). Export the dedicated judge route so the
-# reviewer hits the REAL Claude route (JUDGE_ROUTE), never the cheap model this
-# session is pointed at. This is what stops "expensive review" self-routing to Qwen.
-export SIDEEYE_JUDGE_BASE_URL="${JUDGE_ROUTE:?set JUDGE_ROUTE (real Claude route) in qwen-gpu.env}"
-export SIDEEYE_JUDGE_API_KEY="$MAAS_API_KEY"
+# UNIFIED Anthropic-dialect route (one URL, model-based routing) so /model can
+# switch between Qwen and Claude in-session.
+ROUTE="${UNIFIED_ROUTE:?set UNIFIED_ROUTE in qwen-gpu.env}"
+# Judge isolation is now handled by the UNIFIED route itself: a `sideeye
+# review/advise` run inherits ANTHROPIC_BASE_URL=$ROUTE (the unified route) and
+# sends model=claude-*, which the router sends to the real Anthropic cluster —
+# never to Qwen. So SIDEEYE_JUDGE_* is no longer needed (resolve_judge_route falls
+# back to ANTHROPIC_*, and judge_route_guard still blocks the old qwen-only route).
+# Set SIDEEYE_JUDGE_BASE_URL only if you want to force the judge somewhere else.
 # Must EXACTLY match vLLM's --served-model-name (qwen-vllm.service) AND the
 # model_pricing row, or vLLM 400s (unknown model) or the gateway bills the
 # $15/M default (no $0 pricing row). All three are "Qwen3.8-27B-FP8".
