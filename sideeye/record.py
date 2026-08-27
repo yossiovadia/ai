@@ -11,14 +11,27 @@ adapter_version stamps which judge-input artifact produced the verdict:
                    the judge never saw the code). All pre-fix verdicts.
   - "v1-sighted" : the judge received the git-diff code artifact (full files
                    with markers). Verdicts under the fixed adapter.
+  - "*-tiered"   : the full packet overflowed the judge's context window, so the
+                   transcript was salience-tiered to fit — all human turns + the
+                   full diff + failure evidence kept, lower-salience assistant/
+                   tool noise evicted. A tiered verdict saw a PARTIAL narrative
+                   (though the complete human intent + code), so it must not pool
+                   with a full-session verdict — it is a different, honestly
+                   weaker, observation of the session.
 Blind and sighted verdicts must NEVER pool in a savings/quality aggregate — a
-narrative-only score and a code-aware score are not commensurable. The cost
-report partitions on this field; absence (old records) is treated as v0-blind.
+narrative-only score and a code-aware score are not commensurable. Nor may tiered
+pool with full. The cost report partitions on this field; absence (old records)
+is treated as v0-blind.
 """
 from __future__ import annotations
 
 ADAPTER_VERSION_BLIND = "v0-blind"
 ADAPTER_VERSION_SIGHTED = "v1-sighted"
+# Tiered variants: same artifact class, but the transcript was degraded to fit
+# the window. Distinct so a partial-narrative verdict never averages in with a
+# whole-session one.
+ADAPTER_VERSION_BLIND_TIERED = "v0-blind-tiered"
+ADAPTER_VERSION_SIGHTED_TIERED = "v1-sighted-tiered"
 
 
 def session_verdict_record(transcript, verdict, meta, *, rubric_version, source,

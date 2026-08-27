@@ -28,13 +28,14 @@ from sideeye.adapters import latest_session, load_transcript, resolve_current_se
 from sideeye.judge.judge import (  # noqa: E402
     advise as run_advise,
     build_advice_body,
+    context_guard,
     estimate_cost,
     judge_route_guard,
     load_rubric,
     resolve_judge_route,
     resolve_model,
 )
-from sideeye.judge.transcript import last_exchange  # noqa: E402
+from sideeye.judge.transcript import recent_exchanges  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent
 DEFAULT_RUBRIC = REPO / "rubric" / "rubric_advice_v1.md"
@@ -51,6 +52,9 @@ def fail(msg):
 def main():
     ap = argparse.ArgumentParser(description="Side-Eye advise (quick second opinion)")
     ap.add_argument("--question", default="", help="the judgement call you want an opinion on")
+    ap.add_argument("--turns", type=int, default=1,
+                    help="how many recent user->assistant exchanges to include (default 1); "
+                         "raise it when the judgement call spans the last few turns")
     ap.add_argument("--current", action="store_true",
                     help="use the current project's latest session (default behavior; "
                          "explicit for the skill surface)")
@@ -101,19 +105,24 @@ def main():
     if transcript is None:
         fail(f"no usable turns in {rollout}")
 
-    produced = last_exchange(transcript)
+    produced = recent_exchanges(transcript, args.turns)
     rubric_text = load_rubric(args.rubric)
 
     # Cost ceiling: input count is exact (count_tokens on the real payload);
     # abort before spending if it somehow exceeds the ceiling.
     body = build_advice_body(rubric_text, args.question, produced, model=args.model)
     input_tokens, est_cost, exact, _ = estimate_cost(args.base_url, api_key, body, args.model)
+    # Hard context-window guard (see escalate.py): refuse a packet that would 400
+    # and still be metered. Advice packets are tiny, so this only trips on a bug.
+    if (prob := context_guard(input_tokens, args.model)):
+        fail(prob)
     if est_cost > args.max_cost:
         fail(f"estimated ${est_cost:.4f} exceeds --max-cost ${args.max_cost:.2f} "
              f"({input_tokens:,} input tokens). Re-run with --max-cost to override.")
 
     print("sideeye · advice mode")
-    print(f"  packet: last exchange ({input_tokens:,} tokens{'' if exact else ', est'}) "
+    scope = "last exchange" if args.turns <= 1 else f"last {args.turns} exchanges"
+    print(f"  packet: {scope} ({input_tokens:,} tokens{'' if exact else ', est'}) "
           f"-> judge: {args.model}")
     print("  route: metered praxis gateway\n")
 

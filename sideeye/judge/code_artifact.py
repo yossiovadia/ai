@@ -156,37 +156,64 @@ def _rel_path(repo_root, path) -> str:
         return str(path)
 
 
-def build_code_artifact(touched_files, repo_root, diff_base="HEAD"):
-    """Build the code-review artifact for a session.
+def _apply_global_budget(entries, budget_chars):
+    """Global diff-overflow rung: when the whole diff won't fit the context budget,
+    keep the MOST-EDITED files' content (edit count is the salience signal — a file
+    rewritten five times is central; one touched once is not) until the budget is
+    spent, and elide the rest to a manifest note. The manifest still lists every
+    touched file, so the judge knows its code view is partial rather than mistaking
+    a trimmed diff for the whole change set. Returns the number of files elided."""
+    order = sorted(range(len(entries)), key=lambda i: (-entries[i]["edits"], entries[i]["lines"]))
+    kept_chars, keep = 0, set()
+    for i in order:
+        c = len(entries[i]["text"])
+        if kept_chars + c <= budget_chars:
+            keep.add(i)
+            kept_chars += c
+    elided = 0
+    for i, e in enumerate(entries):
+        if i not in keep and not e["view"].endswith("manifest-only"):
+            e["view"] += "-elided"
+            e["text"] = (f"(content elided to fit the context budget — {e['path']}; "
+                         f"{e['edits']} edits, {e['lines']} lines. Re-run --no-code for "
+                         "narrative-only, or narrow the change set, to see it.)")
+            elided += 1
+    return elided
 
-    touched_files: list of {path, count} (path may be absolute or repo-relative;
-                      the adapter extracts these from the transcript's Edit/Write
-                      tool_use blocks).
-    repo_root: the git toplevel (where `git` commands run).
-    diff_base: the ref to diff against (default HEAD = working-tree changes;
-               the stage-1 limitation is that committed work shows as no-diff).
 
-    Returns the artifact text (manifest + per-file diffs), ready to append to
-    the judge's `produced` payload. Returns "" if no touched files — the judge
-    then falls back to narrative-only, honestly (the manifest records this).
-    """
+def build_diff_entries(touched_files, repo_root, diff_base="HEAD"):
+    """Run git ONCE and return the per-file diff entries (the expensive step).
+    Kept separate from rendering so the caller can re-render at several budgets
+    (the global diff-overflow search) without re-shelling to git each time."""
     if not touched_files:
-        return ""
-
+        return []
     repo_root = pathlib.Path(repo_root).resolve()
     entries = []
     for tf in touched_files:
-        path = tf["path"]
-        p = pathlib.Path(path)
+        p = pathlib.Path(tf["path"])
         if not p.is_absolute():
-            p = repo_root / path
+            p = repo_root / tf["path"]
         entry = _render_file(repo_root, p, diff_base)
         entry["edits"] = tf.get("count", 0)
         entries.append(entry)
+    return entries
 
-    lines = ["## Code changes (adapter v1-sighted)",
-             "",
-             "# manifest: path, lines, edits, view"]
+
+def render_diff_artifact(entries, budget_chars=None):
+    """Render pre-built entries into the artifact text (manifest + per-file diffs).
+    budget_chars: optional global cap on per-file CONTENT chars — least-edited
+    files degrade to a manifest note so the most-edited code still gets reviewed.
+    Non-destructive (copies entries) so it can be called repeatedly at different
+    budgets during the fit search."""
+    if not entries:
+        return ""
+    entries = [dict(e) for e in entries]   # copy — budgeting mutates views/text
+    elided = _apply_global_budget(entries, budget_chars) if budget_chars is not None else 0
+
+    header = "## Code changes (adapter v1-sighted)"
+    if elided:
+        header += f" — {elided} least-edited file(s) elided to fit context (manifest below)"
+    lines = [header, "", "# manifest: path, lines, edits, view"]
     for e in entries:
         lines.append(f"#   {e['path']}  {e['lines']} lines  {e['edits']} edits  view: {e['view']}")
     lines.append("")
@@ -195,3 +222,12 @@ def build_code_artifact(touched_files, repo_root, diff_base="HEAD"):
         lines.append(e["text"])
         lines.append("")
     return "\n".join(lines)
+
+
+def build_code_artifact(touched_files, repo_root, diff_base="HEAD", budget_chars=None):
+    """Build the code-review artifact for a session: git diff of the touched files
+    with markers, so the judge reviews the actual code, not just the narrative.
+    Returns "" if no touched files (the judge falls back to narrative-only,
+    honestly). Convenience wrapper over build_diff_entries + render_diff_artifact."""
+    return render_diff_artifact(build_diff_entries(touched_files, repo_root, diff_base),
+                                budget_chars)
