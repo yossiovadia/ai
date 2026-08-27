@@ -55,6 +55,28 @@ def test_recent_exchanges_n_returns_multiple_real_exchanges():
     assert "second ask" in out1 and "first ask" not in out1  # just the last
 
 
+def test_recent_exchanges_includes_tool_results_when_sighted():
+    t = _t([
+        {"role": "user", "text": "fix the bug"},
+        {"role": "assistant", "text": "on it [Edit: /repo/x.py]"},
+        {"role": "tool", "text": "[tool_result: applied edit, 3 lines changed]"},
+        {"role": "assistant", "text": "done"},
+    ])
+    light = recent_exchanges(t, 1)                       # default: no tool dumps
+    sighted = recent_exchanges(t, 1, include_tools=True)  # evidence included
+    assert "applied edit" not in light
+    assert "applied edit" in sighted and "fix the bug" in sighted
+
+
+def test_edit_ref_regex_scopes_the_diff_to_recent_files():
+    # advise scopes the diff to files edited in the shown exchanges via the
+    # adapter's [Edit: <path>] refs — verify the extraction that drives it.
+    from sideeye.advise import _EDIT_REF
+    text = ("ASSISTANT:\non it [Edit: /repo/a.py] and [Write: /repo/b.py]\n"
+            "also [MultiEdit: /repo/c.py] but not [ran: pytest] or [tool_use: Read]")
+    assert set(_EDIT_REF.findall(text)) == {"/repo/a.py", "/repo/b.py", "/repo/c.py"}
+
+
 def test_human_question_quoting_escalate_output_is_not_skipped():
     # A human pasting advice output into their own short question must stay
     # reviewable — role-aware detection means only the injected skill body is machinery.

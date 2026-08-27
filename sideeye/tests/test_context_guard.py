@@ -79,3 +79,27 @@ def test_call_judge_falls_back_to_text_when_body_not_json(monkeypatch):
     with pytest.raises(requests.HTTPError) as ei:
         J.call_judge("https://api.anthropic.com", "k", {"model": "claude-fable-5"})
     assert "upstream boom" in str(ei.value)
+
+
+# --- User-Agent: makes escalate its own "client" on the metering dashboard ----
+
+def test_call_judge_and_count_tokens_send_custom_user_agent(monkeypatch):
+    seen = []
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.append((headers or {}).get("user-agent"))
+        payload = {"input_tokens": 5} if url.endswith("count_tokens") else {"content": [], "usage": {}}
+        return _Resp(200, "OK", payload=payload)
+    monkeypatch.setattr(J.requests, "post", fake_post)
+    J.call_judge("https://api.anthropic.com", "k", {"model": "m"}, user_agent="sideeye-review")
+    J.count_tokens("https://api.anthropic.com", "k", {"model": "m"}, user_agent="sideeye-advise")
+    assert seen == ["sideeye-review", "sideeye-advise"]   # not python-requests
+
+
+def test_user_agent_defaults_to_sideeye(monkeypatch):
+    seen = {}
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["ua"] = (headers or {}).get("user-agent")
+        return _Resp(200, "OK", payload={"content": [], "usage": {}})
+    monkeypatch.setattr(J.requests, "post", fake_post)
+    J.call_judge("https://api.anthropic.com", "k", {"model": "m"})
+    assert seen["ua"].startswith("sideeye")

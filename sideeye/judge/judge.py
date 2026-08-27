@@ -236,7 +236,14 @@ def judge_route_guard(base_url):
     return None
 
 
-def call_judge(base_url, api_key, body, timeout=60):
+# User-Agent for Side-Eye's own gateway calls. The metering dashboard derives the
+# "client" column from this header, so a distinct value makes escalate traffic
+# show as its own client (not "Python SDK") and filterable for cost. Overridden
+# per surface: "sideeye-review" (escalate-all) / "sideeye-advise" (escalate-last).
+DEFAULT_USER_AGENT = "sideeye/1.0"
+
+
+def call_judge(base_url, api_key, body, timeout=60, user_agent=DEFAULT_USER_AGENT):
     prob = judge_route_guard(base_url)
     if prob:
         raise ValueError(prob)
@@ -245,6 +252,7 @@ def call_judge(base_url, api_key, body, timeout=60):
         "x-api-key": api_key,
         "anthropic-version": ANTHROPIC_VERSION,
         "content-type": "application/json",
+        "user-agent": user_agent,
     }
     resp = requests.post(url, headers=headers, json=body, timeout=timeout)
     if resp.status_code >= 400:
@@ -262,7 +270,7 @@ def call_judge(base_url, api_key, body, timeout=60):
     return resp.json()
 
 
-def count_tokens(base_url, api_key, body, timeout=30):
+def count_tokens(base_url, api_key, body, timeout=30, user_agent=DEFAULT_USER_AGENT):
     """Ask the Anthropic count_tokens endpoint for the exact input token count of
     a request body. Free call. Returns (input_tokens, ok, reason): ok=True and
     reason="" on success; ok=False with a human-readable reason on failure so the
@@ -275,6 +283,7 @@ def count_tokens(base_url, api_key, body, timeout=30):
         "x-api-key": api_key,
         "anthropic-version": ANTHROPIC_VERSION,
         "content-type": "application/json",
+        "user-agent": user_agent,
     }
     # count_tokens accepts model/system/messages/tools/tool_choice (the tool
     # schemas DO count as billed input) but not sampling params like max_tokens
@@ -309,13 +318,14 @@ def _fallback_token_count(body):
     return (sys_len + msg_len + tools_len) // 4
 
 
-def estimate_cost(base_url, api_key, body, model, max_tokens=DEFAULT_MAX_TOKENS):
+def estimate_cost(base_url, api_key, body, model, max_tokens=DEFAULT_MAX_TOKENS,
+                  user_agent=DEFAULT_USER_AGENT):
     """Pre-judge cost estimate. Input side is exact (count_tokens on the real
     payload); output is bounded by max_tokens and labeled an estimate. Returns
     (input_tokens, est_cost_usd, exact, reason): exact=True means the input
     count came from count_tokens; False means it fell back to chars/4 and reason
     explains why (so the caller can label it honestly or fix the route)."""
-    input_tokens, exact, reason = count_tokens(base_url, api_key, body)
+    input_tokens, exact, reason = count_tokens(base_url, api_key, body, user_agent=user_agent)
     if not exact:
         input_tokens = _fallback_token_count(body)
     cin, cout = PRICING.get(model, PRICING[DEFAULT_MODEL])
@@ -327,7 +337,8 @@ def estimate_cost(base_url, api_key, body, model, max_tokens=DEFAULT_MAX_TOKENS)
 
 
 def judge(asked, produced, rubric_text, *, base_url, api_key,
-          model=DEFAULT_MODEL, max_tokens=DEFAULT_MAX_TOKENS, timeout=60):
+          model=DEFAULT_MODEL, max_tokens=DEFAULT_MAX_TOKENS, timeout=60,
+          user_agent=DEFAULT_USER_AGENT):
     """Grade one (asked, produced) pair. Returns (verdict, meta).
 
     Forced tool_choice isn't always honored — on long inputs the judge
@@ -340,7 +351,7 @@ def judge(asked, produced, rubric_text, *, base_url, api_key,
     so the caller can record the failure honestly instead of crashing blind.
     """
     body = build_request_body(rubric_text, asked, produced, model=model, max_tokens=max_tokens)
-    responses = [call_judge(base_url, api_key, body, timeout=timeout)]
+    responses = [call_judge(base_url, api_key, body, timeout=timeout, user_agent=user_agent)]
     try:
         verdict = parse_verdict(responses[-1])
     except VerdictError as exc:
@@ -377,7 +388,7 @@ def judge(asked, produced, rubric_text, *, base_url, api_key,
             "tools": body["tools"],
             "tool_choice": body["tool_choice"],
         }
-        responses.append(call_judge(base_url, api_key, retry_body, timeout=timeout))
+        responses.append(call_judge(base_url, api_key, retry_body, timeout=timeout, user_agent=user_agent))
         verdict = parse_verdict(responses[-1])  # may raise — caller handles
 
     # Accumulate spend across every call (the original + any retry), so the
@@ -425,12 +436,13 @@ def _extract_text(response_json) -> str:
 
 
 def advise(asked, produced, rubric_text, *, base_url, api_key,
-           model=DEFAULT_MODEL, max_tokens=DEFAULT_MAX_TOKENS, timeout=60):
+           model=DEFAULT_MODEL, max_tokens=DEFAULT_MAX_TOKENS, timeout=60,
+           user_agent=DEFAULT_USER_AGENT):
     """ADVICE mode: one free-form second opinion on the last exchange. Returns
     (advice_text, meta). No retry loop — advice has no required-field schema to
     violate, unlike the verdict path."""
     body = build_advice_body(rubric_text, asked, produced, model=model, max_tokens=max_tokens)
-    resp = call_judge(base_url, api_key, body, timeout=timeout)
+    resp = call_judge(base_url, api_key, body, timeout=timeout, user_agent=user_agent)
     text = _extract_text(resp)
     if not text:
         raise ValueError("judge returned no text for advice")

@@ -83,7 +83,7 @@ def test_pathological_human_paste_is_capped():
 
 # --- _fit_packet: full when it fits, tiered when it doesn't ---------------
 
-def _tokmodel(base, key, body, model, max_tokens=None):
+def _tokmodel(base, key, body, model, max_tokens=None, user_agent=None):
     """Deterministic offline stand-in for estimate_cost: ~chars/4 of the real
     billable parts (system + user message + a flat tool-schema overhead)."""
     user = body["messages"][0]["content"]

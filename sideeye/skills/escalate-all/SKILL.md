@@ -1,6 +1,6 @@
 ---
 name: Escalate All
-description: Send the CURRENT Claude Code session to the Side-Eye judge (Fable) for a full sighted review (transcript + code diff). User-invoked only; spends real money.
+description: Full sighted review of the CURRENT session by the Side-Eye judge (transcript + code diff). Flags — --model, --no-code, --max-cost, --help. User-invoked; spends real money.
 disable-model-invocation: true
 allowed-tools: Bash(sideeye review *)
 ---
@@ -10,6 +10,9 @@ allowed-tools: Bash(sideeye review *)
 Get a real, independent review of THIS session from the strong judge.
 
 ## What to do
+
+**If the user's arguments are exactly `--help` (or `help`), do NOT run the review
+— print the Flags section below and stop (no spend).**
 
 Run this command, with a **generous Bash timeout (≥ 300000 ms)** — a
 full-session judge call can take a few minutes:
@@ -41,6 +44,15 @@ Then:
    real stdout of `sideeye review` is a verdict. If the command fails, returns
    nothing, or is blocked, say so plainly and stop — do not fabricate scores,
    issues, or a summary under any circumstances.
+
+## Flags (what the user can pass after /escalate-all)
+
+- `--model <fable|opus|sonnet|haiku|full-id>` — which judge model (default opus).
+- `--no-code` — narrative-only review (skip the code diff).
+- `--max-cost N` — abort if the estimate exceeds N dollars (safety ceiling).
+- `--help` — print this flag list without running (no spend).
+
+(The authoritative list is always `sideeye review --help`.)
 
 ## Notes
 - The `sideeye` command must be on PATH and `SIDEEYE_JUDGE_BASE_URL` /

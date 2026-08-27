@@ -31,7 +31,7 @@ def _valid_verdict_response():
 def test_retry_answers_tool_use_with_tool_result(monkeypatch):
     bodies = []
 
-    def fake_call(base, key, body, timeout=60):
+    def fake_call(base, key, body, timeout=60, **kwargs):
         bodies.append(body)
         return _malformed_first() if len(bodies) == 1 else _valid_verdict_response()
 
@@ -60,7 +60,7 @@ def test_retry_answers_tool_use_with_tool_result(monkeypatch):
 def test_retry_success_returns_valid_verdict(monkeypatch):
     calls = {"n": 0}
 
-    def fake_call(base, key, body, timeout=60):
+    def fake_call(base, key, body, timeout=60, **kwargs):
         calls["n"] += 1
         return _malformed_first() if calls["n"] == 1 else _valid_verdict_response()
 

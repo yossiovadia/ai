@@ -1,16 +1,21 @@
 ---
 name: Escalate Last
-description: Ask the Side-Eye judge (Fable) for a quick second opinion on the last exchange in this session. User-invoked only; spends a few cents.
+description: Side-Eye judge's opinion on your recent exchange(s) + their code diff. Flags — --turns, --no-code, --model, --help. User-invoked; spends ~cents.
 disable-model-invocation: true
 allowed-tools: Bash(sideeye advise *)
 ---
 
-# /escalate-last — quick second opinion
+# /escalate-last — quick second opinion on your recent work
 
-A fast gut-check on the most recent exchange (e.g. "which design option should I
-pick?"). Light packet, ~cents.
+A scoped gut-check on the most recent exchange(s): "is my recent change / decision
+sound?" It's **sighted** — the judge sees the tool results and the git diff of the
+files touched in those exchanges (recent-scoped, so it stays cheap). Use `--no-code`
+for a pure judgement call ("which design option?") where no code was written.
 
 ## What to do
+
+**If the user's arguments are exactly `--help` (or `help`), do NOT run the judge
+— print the Flags section below and stop (no spend).**
 
 Treat everything the user typed after `/escalate-last` as their question (it may
 be empty — that's fine). Run:
@@ -19,16 +24,21 @@ be empty — that's fine). Run:
 sideeye advise --current --yes --question "<the user's text here, or empty>"
 ```
 
-**If the user passed `--turns=N`** (e.g. `/escalate-last --turns=3 which one?`),
-pull that flag out and pass it through, using the remaining text as the question:
+**Pass through any flags the user typed** (e.g. `/escalate-last --turns=3 --no-code
+which one?` → `sideeye advise --current --yes --turns 3 --no-code --question "which one?"`).
+Pass through only flags the user actually typed; don't invent them.
 
-```
-sideeye advise --current --yes --turns N --question "which one?"
-```
+## Flags (what the user can pass after /escalate-last)
 
-`--turns` controls how many recent user→assistant exchanges are included (default
-1). Raise it when the judgement call spans the last few turns. Pass through only
-flags the user actually typed; don't invent them.
+- `--turns N` — how many recent user→assistant exchanges to include (default 1).
+  Raise it when the question spans the last few turns.
+- `--no-code` — skip the diff; conversation-only opinion (for judgement calls
+  where no code was written yet).
+- `--model <fable|opus|sonnet|haiku|full-id>` — which judge model (default fable).
+- `--max-cost N` — abort if the estimate exceeds N dollars (safety ceiling).
+- `--repo <path>` — repo root for the diff (default: current dir).
+
+(The authoritative list is always `sideeye advise --help`.)
 
 Then:
 
