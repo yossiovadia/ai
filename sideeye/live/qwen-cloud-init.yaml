@@ -32,6 +32,10 @@ write_files:
 
       [Service]
       Type=simple
+      # POC (interim): derive a chat template that forces reasoning_effort=medium
+      # so Claude Code's "high" (which this model's template rejects) can't 500.
+      # Remove when vllm#52739 (map-to-nearest) lands + we upgrade off vLLM 0.27.1.
+      ExecStartPre=/var/usrlocal/bin/patch-qwen-template.sh
       ExecStart=/usr/bin/podman run --replace --name qwen-vllm \
         --device nvidia.com/gpu=all --network host --shm-size 16g \
         -v /var/vllm-cache:/root/.cache/huggingface:Z \
@@ -41,6 +45,7 @@ write_files:
         --max-model-len 262144 --max-num-seqs 32 \
         --kv-cache-dtype fp8 --gpu-memory-utilization 0.94 \
         --enable-prefix-caching --reasoning-parser qwen3 \
+        --chat-template /root/.cache/huggingface/chat_template.medium.jinja \
         --enable-auto-tool-choice --tool-call-parser qwen3_coder \
         --speculative-config '{"method":"mtp","num_speculative_tokens":2}' --port 8000
       ExecStop=/usr/bin/podman stop -t 30 qwen-vllm
@@ -59,6 +64,35 @@ write_files:
     content: |
       [Service]
       OOMScoreAdjust=-1000
+
+  # POC (interim): the Qwen3.8 chat template validates reasoning_effort against
+  # (xhigh, medium, low) and raise_exception's on anything else, so Claude Code's
+  # "high" returns a 500 (with retry-storm latency + phantom 0-token metering
+  # rows). Upstream fix is vllm#52739 (map-to-nearest); until it lands and we
+  # upgrade off vLLM 0.27.1, derive a template that forces reasoning_effort=medium
+  # for ALL values (deliberate POC flatten). Re-derives from the model's OWN
+  # template on every start and FAILS LOUDLY if the effort pattern changed —
+  # never silently serves an unpatched template. Delete this file + the
+  # ExecStartPre + the --chat-template flag when the upstream fix is in.
+  - path: /var/usrlocal/bin/patch-qwen-template.sh
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      # --entrypoint python3: the vllm image's default entrypoint is the server;
+      # override it so this runs plain Python (no GPU/device init in this helper).
+      # -i so the heredoc on stdin reaches `python3 -` inside the container.
+      /usr/bin/podman run --rm -i --entrypoint python3 \
+        -v /var/vllm-cache:/root/.cache/huggingface:Z \
+        docker.io/vllm/vllm-openai:latest - <<'PY'
+      import re, pathlib
+      from huggingface_hub import hf_hub_download
+      src = pathlib.Path(hf_hub_download("Qwen/Qwen3.8-27B-FP8", "chat_template.jinja")).read_text()
+      out, n = re.subn(r"reasoning_effort\s*\|\s*default\(\s*['\"]xhigh['\"]\s*\)", "'medium'", src)
+      assert n >= 1, "effort-force pattern not found; Qwen template changed — revisit the POC patch"
+      pathlib.Path("/root/.cache/huggingface/chat_template.medium.jinja").write_text(out)
+      print(f"[patch-qwen-template] forced reasoning_effort=medium ({n} site)")
+      PY
 
 runcmd:
   # Persist the HF model cache + torch.compile cache across restarts.
