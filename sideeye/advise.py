@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Side-Eye ADVISE — a quick second opinion on the last exchange.
 
-The light sibling of `escalate`: instead of reviewing a whole session with the
-code diff, it sends only the LAST user->assistant exchange (plus an optional
---question) to the strong judge and prints a free-form recommendation. This is
-the `/escalate-last` surface — "which of these should I pick?" — a judgement
-call, not a code review, so the packet is tiny (~$0.02-0.05).
+The scoped sibling of `escalate`: instead of the WHOLE session, it sends the last
+N user->assistant exchanges (--turns) plus their evidence — tool results and the
+git diff of files touched IN those exchanges — to the strong judge and prints a
+free-form recommendation. This is the `/escalate-last` surface: "is my recent
+change / decision sound?" It's sighted (sees the recent code), but recent-scoped
+so it stays far cheaper than a full-session review. --no-code drops the diff for
+a pure judgement call ("SQLite or JSONL?") where no code was written yet.
 
 Like escalate, the judge MUST hit the real Claude route, never the cheap model:
 SIDEEYE_JUDGE_BASE_URL / SIDEEYE_JUDGE_API_KEY win over ANTHROPIC_* so this is
@@ -19,12 +21,14 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from sideeye.adapters import latest_session, load_transcript, resolve_current_session  # noqa: E402
+from sideeye.judge.code_artifact import build_code_artifact  # noqa: E402
 from sideeye.judge.judge import (  # noqa: E402
     advise as run_advise,
     build_advice_body,
@@ -37,11 +41,16 @@ from sideeye.judge.judge import (  # noqa: E402
 )
 from sideeye.judge.transcript import recent_exchanges  # noqa: E402
 
+# Edit/Write tool_use renders as "[Edit: <path>]" etc. (adapters/claude_code.py);
+# used to scope the diff to files touched in the shown exchanges.
+_EDIT_REF = re.compile(r"\[(?:Edit|Write|MultiEdit|NotebookEdit): (.+?)\]")
+
 REPO = pathlib.Path(__file__).resolve().parent
 DEFAULT_RUBRIC = REPO / "rubric" / "rubric_advice_v1.md"
 DEFAULT_OUT = REPO / "verdicts" / "advice.jsonl"
 ADVICE_MODEL = "claude-fable-5"      # advice is human-bounded + tiny; use the top tier
-DEFAULT_MAX_COST = 0.50              # advice packets are tiny; this only trips on a bug
+DEFAULT_MAX_COST = 1.50              # sighted now (recent diff); still recent-scoped + bounded
+_ADVISE_UA = "sideeye-advise"       # metering "client" label for escalate-last traffic
 
 
 def fail(msg):
@@ -64,6 +73,10 @@ def main():
                     help="search every project for the latest session (default: current project)")
     ap.add_argument("--project", default=None, help="a specific project dirname under ~/.claude/projects/")
     ap.add_argument("--model", default=ADVICE_MODEL)
+    ap.add_argument("--no-code", action="store_true",
+                    help="skip the code diff — pure conversation-only opinion (for judgement "
+                         "calls like 'SQLite or JSONL?' where no code was written)")
+    ap.add_argument("--repo", default=None, help="repo root for the code diff (default: cwd)")
     ap.add_argument("--rubric", default=str(DEFAULT_RUBRIC))
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--max-cost", type=float, default=DEFAULT_MAX_COST,
@@ -105,13 +118,30 @@ def main():
     if transcript is None:
         fail(f"no usable turns in {rollout}")
 
-    produced = recent_exchanges(transcript, args.turns)
+    produced = recent_exchanges(transcript, args.turns, include_tools=True)
+
+    # Sighted advice: append the git diff of files touched IN these recent
+    # exchanges (scoped by the edit-refs in the shown turns), so a 2-turn advice
+    # reviews the recent change's code — and stays cheap because it's the recent
+    # diff, not the whole session's. --no-code skips it for pure judgement calls.
+    n_code_files = 0
+    if not args.no_code:
+        edited = set(_EDIT_REF.findall(produced))
+        recent_touched = [tf for tf in (transcript.get("touched_files") or [])
+                          if tf["path"] in edited]
+        if recent_touched:
+            repo_root = pathlib.Path(args.repo) if args.repo else pathlib.Path.cwd()
+            diff = build_code_artifact(recent_touched, repo_root)
+            if diff:
+                produced = produced + "\n\n" + diff
+                n_code_files = len(recent_touched)
     rubric_text = load_rubric(args.rubric)
 
     # Cost ceiling: input count is exact (count_tokens on the real payload);
     # abort before spending if it somehow exceeds the ceiling.
     body = build_advice_body(rubric_text, args.question, produced, model=args.model)
-    input_tokens, est_cost, exact, _ = estimate_cost(args.base_url, api_key, body, args.model)
+    input_tokens, est_cost, exact, _ = estimate_cost(args.base_url, api_key, body, args.model,
+                                                      user_agent=_ADVISE_UA)
     # Hard context-window guard (see escalate.py): refuse a packet that would 400
     # and still be metered. Advice packets are tiny, so this only trips on a bug.
     if (prob := context_guard(input_tokens, args.model)):
@@ -122,13 +152,15 @@ def main():
 
     print("sideeye · advice mode")
     scope = "last exchange" if args.turns <= 1 else f"last {args.turns} exchanges"
-    print(f"  packet: {scope} ({input_tokens:,} tokens{'' if exact else ', est'}) "
+    code_note = f" + {n_code_files} file(s) diff" if n_code_files else ""
+    print(f"  packet: {scope}{code_note} ({input_tokens:,} tokens{'' if exact else ', est'}) "
           f"-> judge: {args.model}")
     print("  route: metered praxis gateway\n")
 
     try:
         text, meta = run_advise(args.question, produced, rubric_text,
-                                base_url=args.base_url, api_key=api_key, model=args.model)
+                                base_url=args.base_url, api_key=api_key, model=args.model,
+                                user_agent=_ADVISE_UA)
     except Exception as exc:  # noqa: BLE001
         fail(f"judge call failed: {exc}")
 

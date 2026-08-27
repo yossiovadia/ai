@@ -66,6 +66,7 @@ _MAX_FIT_ITERS = 4              # estimate-then-verify iterations (converges in 
 # description) needs more output room than the 1024 default — a truncated
 # record_verdict drops a required field and forces the retry. Give it headroom.
 _REVIEW_MAX_TOKENS = 4096
+_REVIEW_UA = "sideeye-review"    # metering "client" label for escalate-all traffic
 
 REPO = pathlib.Path(__file__).resolve().parent
 DEFAULT_RUBRIC = REPO / "rubric" / "rubric_session_v2.md"
@@ -93,7 +94,7 @@ def fail(msg):
 
 
 def _fit_packet(transcript, asked, make_diff, rubric_text, *, base_url, api_key, model,
-                max_tokens=DEFAULT_MAX_TOKENS):
+                max_tokens=DEFAULT_MAX_TOKENS, user_agent=_REVIEW_UA):
     """Fit the judge packet into `model`'s context window.
 
     make_diff(budget_chars=None) -> the code artifact (str) or None. Passing a
@@ -121,7 +122,7 @@ def _fit_packet(transcript, asked, make_diff, rubric_text, *, base_url, api_key,
         # built packet + its REAL token count (+ cost/exact/reason).
         produced = transcript_text + (("\n\n" + diff) if diff else "")
         body = build_request_body(rubric_text, asked, produced, model=model)
-        it, ec, ex, rs = estimate_cost(base_url, api_key, body, model)
+        it, ec, ex, rs = estimate_cost(base_url, api_key, body, model, user_agent=user_agent)
         return produced, it, ec, ex, rs
 
     full_text = render(transcript)
@@ -326,7 +327,7 @@ def main():
     produced, input_tokens, est_cost, exact, reason, coverage = _fit_packet(
         transcript, asked, make_diff, rubric_text,
         base_url=args.base_url, api_key=api_key, model=args.model,
-        max_tokens=_REVIEW_MAX_TOKENS)
+        max_tokens=_REVIEW_MAX_TOKENS, user_agent=_REVIEW_UA)
 
     if coverage is not None:
         # Tiered: stamp a DISTINCT adapter_version (a partial-narrative verdict is
@@ -387,7 +388,7 @@ def main():
         # (judge_session would render the FULL transcript again, undoing tiering).
         verdict, meta = judge(asked, produced, rubric_text, base_url=args.base_url,
                               api_key=api_key, model=args.model, timeout=90,
-                              max_tokens=_REVIEW_MAX_TOKENS)
+                              max_tokens=_REVIEW_MAX_TOKENS, user_agent=_REVIEW_UA)
     except Exception as exc:
         # The judge ran (money was spent) but produced no valid verdict even
         # after retry. Don't crash and lose the evidence — record the failure

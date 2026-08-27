@@ -224,7 +224,7 @@ def _is_escalation_turn(turn) -> bool:
     return False
 
 
-def recent_exchanges(t, n: int = 1) -> str:
+def recent_exchanges(t, n: int = 1, include_tools: bool = False) -> str:
     """The last `n` user->assistant exchanges, rendered — the light packet for
     advice mode (a judgement call on recent turns, not a full session review, so
     no full transcript, no code diff). Side-Eye's own /escalate-* machinery is
@@ -244,7 +244,10 @@ def recent_exchanges(t, n: int = 1) -> str:
     parts = []
     for tn in scope[start:]:
         text = tn["text"].strip()
-        if not text or tn["role"] == "tool":     # keep it light — no tool dumps
+        # tool results are the EVIDENCE of the recent exchange (file reads, edit
+        # outputs, command results). Include them when the caller wants a sighted
+        # packet; drop them for a pure conversation-only opinion.
+        if not text or (tn["role"] == "tool" and not include_tools):
             continue
         parts.append(f"{tn['role'].upper()}:\n{text}")
     return "\n\n".join(parts) if parts else render(t)

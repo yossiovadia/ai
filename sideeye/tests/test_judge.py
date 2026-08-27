@@ -147,7 +147,7 @@ def test_judge_retries_once_on_malformed_verdict(monkeypatch):
     returned verdict is the good one from the second call."""
     calls = _bad_then_good_responses()
     sent = []
-    def fake_call(base_url, api_key, body, timeout=60):
+    def fake_call(base_url, api_key, body, timeout=60, **kwargs):
         sent.append(body)
         return calls.pop(0)
     monkeypatch.setattr(J, "call_judge", fake_call)
@@ -222,7 +222,7 @@ def test_judge_session_appends_code_artifact(monkeypatch):
     """When a code_artifact is given, it's appended to the produced text the
     judge sees — so the judge reviews the code, not just the narrative."""
     seen_body = {}
-    def fake_call(base_url, api_key, body, timeout=60):
+    def fake_call(base_url, api_key, body, timeout=60, **kwargs):
         seen_body["content"] = body["messages"][0]["content"]
         return _response_with_tool(_good_verdict())
     monkeypatch.setattr(J, "call_judge", fake_call)
@@ -240,7 +240,7 @@ def test_judge_session_without_code_artifact_is_narrative_only(monkeypatch):
     """No code_artifact = narrative only (the blind fallback). The judge still
     works; the absence is recorded via adapter_version downstream."""
     seen_body = {}
-    def fake_call(base_url, api_key, body, timeout=60):
+    def fake_call(base_url, api_key, body, timeout=60, **kwargs):
         seen_body["content"] = body["messages"][0]["content"]
         return _response_with_tool(_good_verdict())
     monkeypatch.setattr(J, "call_judge", fake_call)
@@ -283,7 +283,7 @@ def test_estimate_cost_fallback_counts_tool_schema():
 
 def test_estimate_cost_exact_when_count_tokens_succeeds(monkeypatch):
     """When count_tokens returns a count, use it exactly and report exact=True."""
-    def fake_count(base_url, api_key, body, timeout=30):
+    def fake_count(base_url, api_key, body, timeout=30, **kwargs):
         return 42_000, True, ""
     monkeypatch.setattr(J, "count_tokens", fake_count)
     body = J.build_request_body("r", "q", "a", model="claude-opus-4-8")
