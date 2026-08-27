@@ -162,6 +162,22 @@ SERVED="$(ssh "${SSH_OPTS[@]}" "$SSH_USER@$NEW_FIP" 'curl -s -m 8 127.0.0.1:8000
     | python3 -c 'import sys,json;print(",".join(m["id"] for m in json.load(sys.stdin).get("data",[])))' 2>/dev/null)"
 log "vLLM healthy. served model(s): $SERVED"
 
+# --- POC: reasoning_effort smoke test -----------------------------------------
+# The chat-template patch (patch-qwen-template.sh) forces effort=medium so no
+# value can 500 the template (Claude Code sends "high", which the stock Qwen3.8
+# template rejects). Verify every value on the ladder returns 200. Remove with
+# the patch when vllm#52739 lands. See qwen-cloud-init.yaml.
+log "smoke-testing reasoning_effort values (all must succeed -> 200)..."
+for eff in low medium high xhigh max; do
+    code="$(ssh "${SSH_OPTS[@]}" "$SSH_USER@$NEW_FIP" \
+        "curl -s -o /dev/null -w '%{http_code}' -m 30 -X POST 127.0.0.1:8000/v1/messages \
+         -H 'content-type: application/json' \
+         -d '{\"model\":\"Qwen3.8-27B-FP8\",\"max_tokens\":8,\"reasoning_effort\":\"$eff\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'" 2>/dev/null)"
+    [ "$code" = "200" ] || die "reasoning_effort='$eff' returned $code (expected 200) — chat-template patch not applied?"
+    log "  effort=$eff -> $code"
+done
+log "effort smoke test passed (all values -> 200)"
+
 # --- persist the new box's identity to the env --------------------------------
 {
   echo ""
