@@ -7,6 +7,14 @@ A user/assistant record carries `message` = {role, content}, where content is a
 string or a list of blocks: {type:text}, {type:tool_use}, {type:tool_result},
 {type:thinking}. Assistant messages carry `message.usage`.
 
+Role classification: Claude Code overloads `role:user` for three different things
+— actual human input, tool results (the tool loop replies as role:user), and
+harness-injected context (task-notifications, system reminders, hook context).
+This adapter SPLITS them into the transcript's user/tool/system roles so that
+downstream salience-tiering can treat human intent as sacred and evict machine
+noise. Collapsing them (the old behavior) made the "human" tier ~145k tokens of
+mostly tool output, defeating the tiering.
+
 Same design note as the Codex adapter: this is the client's view. Production
 capture belongs in the gateway; this is the POC scaffold.
 
@@ -31,6 +39,17 @@ _NOISE_MARKERS = (
     "<command-stdout>", "Caveat: The messages below",
 )
 
+# Injected-context markers: content the harness stuffs into a user-role message
+# that is NOT the human speaking (tool-loop notifications, system reminders, hook
+# context). Classified role="system" so salience-tiering treats it as droppable
+# noise, NOT as sacred human intent. Without this, Claude Code's habit of sending
+# tool results + notifications as role:user makes the "sacred" tier balloon to
+# 145k tokens (mostly machine output) and the whole point of tiering collapses.
+_SYSTEM_INJECT_MARKERS = (
+    "<task-notification>", "<system-reminder>", "[SYSTEM NOTIFICATION",
+    "<hindsight_memories>", "UserPromptSubmit hook",
+)
+
 # Evidence (test/build/command output) is kept head-N + tail-M with an elision
 # marker: failures print mid-run, the summary prints last, the command first,
 # so head+tail covers all three. Replaces the old head-only 2000-char cap,
@@ -46,6 +65,16 @@ _FILE_EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 def _looks_like_noise(text: str) -> bool:
     head = text.lstrip()[:80]
     return any(m in head or m in text[:200] for m in _NOISE_MARKERS)
+
+
+def _looks_like_injected_system(text: str) -> bool:
+    head = text.lstrip()[:200]
+    return any(m in head for m in _SYSTEM_INJECT_MARKERS)
+
+
+def _has_tool_result(content) -> bool:
+    return isinstance(content, list) and any(
+        isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
 
 
 def _head_tail(text: str, head: int, tail: int) -> str:
@@ -124,17 +153,31 @@ def parse_session(path):
             role = msg.get("role")
             if role not in ("user", "assistant"):
                 continue
-            text = _render_content(msg.get("content"), touched)
+            content = msg.get("content")
+            text = _render_content(content, touched)
             if not text.strip():
                 continue
-            if role == "user" and _looks_like_noise(text):
-                continue
-            turns.append({"role": role, "text": text})
+
             if role == "assistant":
+                turns.append({"role": "assistant", "text": text})
                 model = msg.get("model") or model
                 usage = msg.get("usage") or {}
                 out_tokens += usage.get("output_tokens", 0)
                 last_in_tokens = usage.get("input_tokens", last_in_tokens) or last_in_tokens
+                continue
+
+            # role == "user": Claude Code overloads this for THREE things — real
+            # human input, tool results (the tool loop replies as role:user), and
+            # harness-injected context. Separate them so salience-tiering can keep
+            # the human sacred and evict the machine noise.
+            if _has_tool_result(content):
+                turns.append({"role": "tool", "text": text})       # evidence tier
+            elif _looks_like_injected_system(text):
+                turns.append({"role": "system", "text": text})     # droppable noise
+            elif _looks_like_noise(text):
+                continue                                           # pure scaffolding
+            else:
+                turns.append({"role": "user", "text": text})       # actual human, sacred
 
     if not turns:
         return None

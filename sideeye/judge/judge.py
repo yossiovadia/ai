@@ -8,6 +8,7 @@ judge's own spend is metered on the dashboard.
 """
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 
@@ -35,6 +36,49 @@ PRICING = {
     "claude-opus-4-8": (5.0 / 1e6, 25.0 / 1e6),
     "claude-fable-5": (10.0 / 1e6, 50.0 / 1e6),
 }
+
+# Judge context windows (input-token limit), per model. The gateway sends the
+# standard model ids — not the [1m] long-context variants — so these are the
+# 200k standard windows. A packet larger than this is rejected by the provider
+# with a 400 ("prompt is too long") BEFORE any useful work, and on the metered
+# route it STILL shows up as spend, so Side-Eye must refuse to send it. Override
+# a specific model here if a longer-context variant is ever routed.
+CONTEXT_WINDOWS = {
+    "claude-sonnet-5": 200_000,
+    "claude-opus-4-8": 200_000,
+    "claude-fable-5": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+}
+DEFAULT_CONTEXT_WINDOW = 200_000
+
+
+def context_window(model) -> int:
+    """The judge model's input context window, in tokens."""
+    return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+
+
+def context_guard(input_tokens, model, max_tokens=DEFAULT_MAX_TOKENS):
+    """Return an error string if a packet of `input_tokens` (plus room for the
+    model's output) would exceed the judge model's context window — i.e. the
+    provider would reject it with a 400 and, on the metered route, still bill it.
+    Return None if it fits.
+
+    This is a HARD limit, orthogonal to --max-cost: a huge packet can sit UNDER
+    the dollar ceiling yet blow past the context window (474k tokens at Fable's
+    $10/M is $4.74 — under a $5 ceiling — but 2.4x over the 200k window). The
+    cost guard alone let exactly that 400 through and still get metered."""
+    window = context_window(model)
+    needed = input_tokens + max_tokens
+    if needed > window:
+        over = needed - window
+        return (f"packet is {input_tokens:,} input tokens; {model}'s context window "
+                f"is {window:,} (need ~{needed:,} with output headroom — over by "
+                f"{over:,}). The judge call would be rejected (400 'prompt is too "
+                "long') and still metered, so Side-Eye is not sending it. Escalate "
+                "a shorter session or a narrower scope; --no-code drops the code "
+                "diff if the narrative alone fits.")
+    return None
+
 
 RECORD_VERDICT_TOOL = {
     "name": "record_verdict",
@@ -203,7 +247,18 @@ def call_judge(base_url, api_key, body, timeout=60):
         "content-type": "application/json",
     }
     resp = requests.post(url, headers=headers, json=body, timeout=timeout)
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        # Surface the provider's error body. raise_for_status() throws it away and
+        # leaves an opaque "400 Bad Request"; Anthropic's body says WHY (e.g.
+        # "prompt is too long: 474074 tokens > 200000 maximum"), which is the
+        # difference between a legible failure and a mystery.
+        try:
+            payload = resp.json()
+            detail = (payload.get("error") or {}).get("message") or json.dumps(payload)
+        except ValueError:
+            detail = (resp.text or "")[:500]
+        raise requests.HTTPError(
+            f"{resp.status_code} {resp.reason} from {url}: {detail}", response=resp)
     return resp.json()
 
 
@@ -293,17 +348,31 @@ def judge(asked, produced, rubric_text, *, base_url, api_key,
         # assistant turn + a correction so it can fix the specific defect,
         # rather than re-judging from scratch. Forced tool_choice makes it
         # re-emit the tool call.
+        #
+        # CRITICAL: the assistant turn we echo back contains a `tool_use` block
+        # (the malformed record_verdict). Anthropic requires the NEXT message to
+        # answer it with a `tool_result` for that exact id — a plain-text nudge
+        # instead triggers "tool_use ids were found without tool_result blocks"
+        # (400), which silently burned a paid first call. So the correction rides
+        # inside the tool_result.
+        correction = (f"Your record_verdict call was invalid: {exc}. "
+                      "Call record_verdict again, this time including ALL required "
+                      f"fields: {', '.join(JUDGE_FIELDS)}.")
+        tool_use_id = next(
+            (b.get("id") for b in responses[-1].get("content", [])
+             if isinstance(b, dict) and b.get("type") == "tool_use"), None)
+        if tool_use_id:
+            user_content = [{"type": "tool_result", "tool_use_id": tool_use_id,
+                             "content": correction, "is_error": True}]
+        else:
+            user_content = correction   # no tool_use to answer (shouldn't happen)
         retry_body = {
             "model": model,
             "max_tokens": max_tokens,
             "system": body["system"],
             "messages": body["messages"] + [
                 {"role": "assistant", "content": responses[-1].get("content", [])},
-                {"role": "user", "content": (
-                    f"Your record_verdict call was invalid: {exc}. "
-                    "Call record_verdict again, this time including ALL required "
-                    f"fields: {', '.join(JUDGE_FIELDS)}."
-                )},
+                {"role": "user", "content": user_content},
             ],
             "tools": body["tools"],
             "tool_choice": body["tool_choice"],

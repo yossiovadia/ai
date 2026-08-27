@@ -19,6 +19,17 @@ be empty — that's fine). Run:
 sideeye advise --current --yes --question "<the user's text here, or empty>"
 ```
 
+**If the user passed `--turns=N`** (e.g. `/escalate-last --turns=3 which one?`),
+pull that flag out and pass it through, using the remaining text as the question:
+
+```
+sideeye advise --current --yes --turns N --question "which one?"
+```
+
+`--turns` controls how many recent user→assistant exchanges are included (default
+1). Raise it when the judgement call spans the last few turns. Pass through only
+flags the user actually typed; don't invent them.
+
 Then:
 
 1. **Present the command's stdout VERBATIM.** Do not paraphrase or "improve" the

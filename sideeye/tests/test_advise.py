@@ -10,11 +10,59 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from sideeye.judge import judge as J  # noqa: E402
-from sideeye.judge.transcript import last_exchange, make_transcript  # noqa: E402
+from sideeye.judge.transcript import last_exchange, make_transcript, recent_exchanges  # noqa: E402
 
 
 def _t(turns):
     return make_transcript(session_id="s", source="claude_code", turns=turns)
+
+
+# --- recent_exchanges: skip Side-Eye's own machinery (the self-capture bug) ---
+
+_SKILL_BODY = ("Base directory for this skill: /Users/x/.claude/skills/escalate-last\n"
+               "# /escalate-last — quick second opinion")
+
+
+def _with_escalation(real_turns):
+    # real exchange(s), then the /escalate-last machinery that trails them.
+    return _t(real_turns + [
+        {"role": "user", "text": _SKILL_BODY},
+        {"role": "assistant", "text": '[ran: sideeye advise --current --yes --question ""]'},
+        {"role": "tool", "text": "[tool_result: sideeye · advice mode\n  packet: last exchange"},
+        {"role": "assistant", "text": "``` sideeye · advice mode\nSECOND OPINION\n..."},
+    ])
+
+
+def test_recent_exchanges_skips_its_own_invocation():
+    t = _with_escalation([{"role": "user", "text": "SQLite or JSONL?"},
+                          {"role": "assistant", "text": "I'd use SQLite."}])
+    out = recent_exchanges(t, 1)
+    assert "SQLite or JSONL?" in out and "I'd use SQLite." in out
+    # None of the escalation machinery leaks into the packet.
+    assert "Base directory for this skill" not in out
+    assert "[ran: sideeye" not in out
+    assert "sideeye · advice mode" not in out
+
+
+def test_recent_exchanges_n_returns_multiple_real_exchanges():
+    t = _with_escalation([
+        {"role": "user", "text": "first ask"}, {"role": "assistant", "text": "first answer"},
+        {"role": "user", "text": "second ask"}, {"role": "assistant", "text": "second answer"},
+    ])
+    out2 = recent_exchanges(t, 2)
+    assert "first ask" in out2 and "second ask" in out2      # both real exchanges
+    out1 = recent_exchanges(t, 1)
+    assert "second ask" in out1 and "first ask" not in out1  # just the last
+
+
+def test_human_question_quoting_escalate_output_is_not_skipped():
+    # A human pasting advice output into their own short question must stay
+    # reviewable — role-aware detection means only the injected skill body is machinery.
+    t = _t([{"role": "user",
+             "text": "is this expected?\n``` sideeye · advice mode\nSECOND OPINION\n..."},
+            {"role": "assistant", "text": "Yes, that's the known bug."}])
+    out = recent_exchanges(t, 1)
+    assert "is this expected?" in out and "known bug" in out
 
 
 # --- last_exchange: the light packet -------------------------------------

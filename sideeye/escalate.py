@@ -34,22 +34,38 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from sideeye.adapters import latest_session, load_transcript, resolve_current_session  # noqa: E402
-from sideeye.judge.code_artifact import build_code_artifact  # noqa: E402
+from sideeye.judge.code_artifact import build_diff_entries, render_diff_artifact  # noqa: E402
 from sideeye.judge.judge import (  # noqa: E402
+    DEFAULT_MAX_TOKENS,
     build_request_body,
+    context_guard,
+    context_window,
     estimate_cost,
+    judge,
     judge_route_guard,
-    judge_session,
     load_rubric,
     resolve_model,
     rubric_version,
 )
-from sideeye.judge.transcript import first_user_ask, render  # noqa: E402
+from sideeye.judge.transcript import first_user_ask, render, render_budgeted  # noqa: E402
 from sideeye.record import (  # noqa: E402
     ADAPTER_VERSION_BLIND,
+    ADAPTER_VERSION_BLIND_TIERED,
     ADAPTER_VERSION_SIGHTED,
+    ADAPTER_VERSION_SIGHTED_TIERED,
     session_verdict_record,
 )
+
+# Headroom reserved below the context window when packing: output budget +
+# a margin for tokenizer disagreement (our count vs the provider's) and JSON
+# wrapping. Fail-closed — we'd rather tier one notch further than eat a 400.
+_SAFETY_TOKENS = 3000
+_INEXACT_EXTRA_MARGIN = 12000   # extra headroom when count_tokens is unavailable
+_MAX_FIT_PROBES = 10            # binary-search probes (free count_tokens) to fill the window
+# A full session review verdict (summary + several issues, each with a
+# description) needs more output room than the 1024 default — a truncated
+# record_verdict drops a required field and forces the retry. Give it headroom.
+_REVIEW_MAX_TOKENS = 4096
 
 REPO = pathlib.Path(__file__).resolve().parent
 DEFAULT_RUBRIC = REPO / "rubric" / "rubric_session_v2.md"
@@ -74,6 +90,112 @@ _EMPTY_VERDICT = {
 def fail(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def _fit_packet(transcript, asked, make_diff, rubric_text, *, base_url, api_key, model,
+                max_tokens=DEFAULT_MAX_TOKENS):
+    """Fit the judge packet into `model`'s context window.
+
+    make_diff(budget_chars=None) -> the code artifact (str) or None. Passing a
+    budget rebuilds the diff smaller (least-edited files degrade to manifest-only),
+    which is the global diff-overflow rung.
+
+    Returns (produced, input_tokens, est_cost, exact, reason, coverage):
+      - coverage is None when the FULL packet fit (normal session, unchanged);
+      - otherwise it describes what tiering kept/dropped (+ coverage['diff_degraded']).
+    Calls fail() only if the packet can't be made to fit at all.
+
+    The packet is built ONCE here and returned, so the cost estimate and the real
+    judge call see the identical bytes (the old path rendered twice — estimate in
+    escalate, call in judge_session — which would mismatch under tiering).
+    All probes use the free count_tokens endpoint — no judge call, no spend."""
+    window = context_window(model)
+
+    def margin(exact):
+        # Fail-closed: reserve the (review) output budget + a safety margin, plus
+        # extra headroom when count_tokens is unavailable and we're on a chars/4 guess.
+        return max_tokens + _SAFETY_TOKENS + (0 if exact else _INEXACT_EXTRA_MARGIN)
+
+    def assemble(transcript_text, diff):
+        produced = transcript_text + (("\n\n" + diff) if diff else "")
+        body = build_request_body(rubric_text, asked, produced, model=model)
+        input_tokens, est_cost, exact, reason = estimate_cost(base_url, api_key, body, model)
+        return (input_tokens + margin(exact) <= window), (produced, input_tokens, est_cost, exact, reason)
+
+    full_text = render(transcript)
+
+    def search(diff, diff_degraded):
+        # Find the LARGEST transcript char budget that still fits, so we USE the
+        # window (keep tool-result evidence + recent narration) rather than
+        # over-shrinking. chars/4 underestimates token-dense content, so we
+        # converge on the real (exact) count. Test the floor (budget 0) FIRST —
+        # if even that overflows, this diff can't be used at all; otherwise binary-
+        # search upward from it for the most transcript that fits.
+        floor_text, floor_cov = render_budgeted(transcript, 0)
+        fits, result = assemble(floor_text, diff)
+        if not fits:
+            return None
+        best = (*result, {**floor_cov, "diff_degraded": diff_degraded})
+        lo, hi = 1, len(full_text)
+        for _ in range(_MAX_FIT_PROBES):
+            if lo > hi:
+                break
+            mid = (lo + hi) // 2
+            transcript_text, coverage = render_budgeted(transcript, mid)
+            fits, result = assemble(transcript_text, diff)
+            if fits:
+                best = (*result, {**coverage, "diff_degraded": diff_degraded})
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return best
+
+    # 1) Try the FULL packet. Normal sessions fit and ship whole, exactly as before.
+    full_diff = make_diff()
+    fits, result = assemble(full_text, full_diff)
+    if fits:
+        return (*result, None)
+
+    # 2) Overflow → salience-tiered degrade with the full diff kept intact.
+    best = search(full_diff, diff_degraded=False)
+    if best is not None:
+        return best
+
+    # 3) Even the transcript floor + full diff overflows → the diff is too big.
+    # Degrade the diff GLOBALLY (drop least-edited files to manifest-only) so the
+    # most-edited code still gets reviewed. Budget by MEASURED tokens, not a char
+    # ratio: code diffs tokenize ~2.5 chars/token (dense), so a chars/4 budget
+    # overshoots. Binary-search the largest diff that fits with the sacred floor;
+    # make_diff is cheap now (git ran once), so this is just count_tokens probes.
+    floor_text = render_budgeted(transcript, 0)[0]
+    floor_fits, (_, floor_tokens, *_r) = assemble(floor_text, None)
+    if not floor_fits:
+        fail(f"the human turns alone are ~{floor_tokens:,} tokens vs {model}'s {window:,} "
+             "window — this session is too large to review in one call even narrative-only. "
+             "Escalate a shorter/fresher session or a narrower scope.")
+
+    if full_diff is not None:
+        lo, hi, best_diff = 0, len(full_diff), make_diff(0)   # 0 = manifest-only floor
+        for _ in range(_MAX_FIT_PROBES):
+            if lo > hi:
+                break
+            mid = (lo + hi) // 2
+            candidate = make_diff(mid)
+            fits, _res = assemble(floor_text, candidate)
+            if fits:
+                best_diff, lo = candidate, mid + 1
+            else:
+                hi = mid - 1
+        # With the largest fitting diff fixed, fill the rest of the window with
+        # transcript tiers (tool evidence, then narration).
+        best = search(best_diff, diff_degraded=len(best_diff) < len(full_diff))
+        if best is not None:
+            return best
+
+    # 4) No diff and the floor still doesn't fit shouldn't reach here (floor_fits
+    # was checked), but guard anyway rather than ship an over-budget packet.
+    fail(f"cannot fit the packet into {model}'s {window:,} window. Re-run with --no-code "
+         "for a narrative-only review, or narrow the change set.")
 
 
 def main():
@@ -180,34 +302,64 @@ def main():
     # is exact via count_tokens; output is bounded and labeled est. This is the
     # guard against the $3.38 surprise: see the price before you commit.
     asked = first_user_ask(transcript)
-    produced = render(transcript)
 
-    # Build the code-review artifact: git diff of the session's touched files,
-    # with markers, so the judge reviews the actual code, not just the narrative.
-    # --no-code disables it (blind mode, for blind-vs-sighted comparison).
+    # Build the code-review artifact lazily via make_diff(budget_chars): the judge
+    # reviews the actual code (git diff with markers), not just narrative. Passing
+    # a budget rebuilds a smaller diff (global diff-overflow rung). --no-code and
+    # unresolvable/absent files fall back to narrative-only (blind), honestly.
     adapter_version = ADAPTER_VERSION_SIGHTED
-    code_artifact = None
-    if not args.no_code:
-        touched = transcript.get("touched_files") or []
-        if touched:
-            repo_root = pathlib.Path(args.repo) if args.repo else pathlib.Path.cwd()
-            code_artifact = build_code_artifact(touched, repo_root)
-            if code_artifact:
-                produced = produced + "\n\n" + code_artifact
-                nfiles = len(touched)
-                print(f"Code    : {nfiles} touched file(s) diffed (sighted, adapter v1)")
-            else:
-                print("Code    : no diff produced (touched files unresolvable) — narrative only")
-                adapter_version = ADAPTER_VERSION_BLIND
-        else:
-            print("Code    : no touched files in transcript — narrative only")
-            adapter_version = ADAPTER_VERSION_BLIND
-    else:
-        print("Code    : --no-code (blind mode, v0) — narrative only")
+    touched = transcript.get("touched_files") or []
+    repo_root = pathlib.Path(args.repo) if args.repo else pathlib.Path.cwd()
+    # Build the diff entries ONCE (git is the slow part); make_diff then re-renders
+    # them cheaply at any budget for the overflow search — no re-shelling to git.
+    diff_entries = ([] if args.no_code or not touched
+                    else build_diff_entries(touched, repo_root))
 
-    body = build_request_body(rubric_text, asked, produced, model=args.model)
-    input_tokens, est_cost, exact, reason = estimate_cost(
-        args.base_url, api_key, body, args.model)
+    def make_diff(budget_chars=None):
+        return render_diff_artifact(diff_entries, budget_chars) or None
+
+    if args.no_code:
+        print("Code    : --no-code (blind mode, v0) — narrative only")
+        adapter_version = ADAPTER_VERSION_BLIND
+    elif not touched:
+        print("Code    : no touched files in transcript — narrative only")
+        adapter_version = ADAPTER_VERSION_BLIND
+    elif make_diff() is None:
+        print("Code    : no diff produced (touched files unresolvable) — narrative only")
+        adapter_version = ADAPTER_VERSION_BLIND
+    else:
+        print(f"Code    : {len(touched)} touched file(s) diffed (sighted, adapter v1)")
+
+    # Fit the packet into the judge's window (builds `produced` once, shared by
+    # the estimate and the real call). coverage is None if the full packet fit;
+    # otherwise the transcript was salience-tiered and coverage says what dropped.
+    produced, input_tokens, est_cost, exact, reason, coverage = _fit_packet(
+        transcript, asked, make_diff, rubric_text,
+        base_url=args.base_url, api_key=api_key, model=args.model,
+        max_tokens=_REVIEW_MAX_TOKENS)
+
+    if coverage is not None:
+        # Tiered: stamp a DISTINCT adapter_version (a partial-narrative verdict is
+        # not commensurable with a full-session one) and show what was dropped.
+        # The tiering itself protects the failure-evidence — every human turn and
+        # tool result — that a naive recency window would have silently dropped.
+        adapter_version = (ADAPTER_VERSION_SIGHTED_TIERED
+                           if adapter_version == ADAPTER_VERSION_SIGHTED
+                           else ADAPTER_VERSION_BLIND_TIERED)
+        k, d = coverage["kept"], coverage["dropped"]
+        has_code = adapter_version == ADAPTER_VERSION_SIGHTED_TIERED
+        diff_desc = ("" if not has_code
+                     else " + partial diff (least-edited files elided)" if coverage.get("diff_degraded")
+                     else " + full diff")
+        print(f"Packet  : overflows {args.model}'s {context_window(args.model):,} window "
+              "— salience-tiered to fit")
+        print(f"          kept: all {k['human']} human turn(s){diff_desc}"
+              f" + {k['assistant']} assistant + {k['tool']} tool turn(s)")
+        print(f"          dropped (lower-salience, newest kept): {d['assistant']} assistant "
+              f"narration + {d['tool']} tool output(s)"
+              + (f"; {coverage['human_capped']} human turn(s) capped" if coverage["human_capped"] else ""))
+        print(f"          verdict stamped {adapter_version} (won't pool with full-session verdicts)")
+
     if exact:
         print(f"Cost    : ~${est_cost:.4f}  ({input_tokens:,} input tokens at judge rate; "
               "output est.)")
@@ -216,6 +368,13 @@ def main():
         # HTTP 404, …) so the user can fix the route rather than guess.
         print(f"Cost    : ~${est_cost:.4f}  (~{input_tokens:,} input tokens, chars/4 "
               f"estimate — count_tokens unavailable ({reason}); output est.)")
+
+    # Context-window guard: a HARD limit that no --max-cost can override. With
+    # tiering the packet should now fit; this is the final assertion that catches
+    # any residual overflow the fit loop couldn't resolve — refuse rather than eat
+    # a 400 that's still metered (474k tokens once cost ~$4.77 for a rejected call).
+    if (prob := context_guard(input_tokens, args.model, max_tokens=_REVIEW_MAX_TOKENS)):
+        fail(prob)
 
     # Cost ceiling: the anti-$3.38-surprise guard that survives --yes. Skips the
     # interactive prompt (needed for non-TTY skill use) but NOT the ceiling, so a
@@ -234,9 +393,11 @@ def main():
     print(f"\nEscalating to {args.model}...\n")
 
     try:
-        verdict, meta = judge_session(transcript, rubric_text, base_url=args.base_url,
-                                      api_key=api_key, model=args.model,
-                                      code_artifact=code_artifact)
+        # Judge the packet we already fit + estimated — same bytes, no re-render
+        # (judge_session would render the FULL transcript again, undoing tiering).
+        verdict, meta = judge(asked, produced, rubric_text, base_url=args.base_url,
+                              api_key=api_key, model=args.model, timeout=90,
+                              max_tokens=_REVIEW_MAX_TOKENS)
     except Exception as exc:
         # The judge ran (money was spent) but produced no valid verdict even
         # after retry. Don't crash and lose the evidence — record the failure
