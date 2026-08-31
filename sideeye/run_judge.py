@@ -33,7 +33,7 @@ from sideeye.judge.judge import (  # noqa: E402
 from sideeye.judge.schema import is_flagged  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent
-DEFAULT_RUBRIC = REPO / "rubric" / "rubric_v1.md"
+DEFAULT_RUBRIC = REPO / "rubric" / "rubric_v3.md"
 
 
 def read_pairs(path):

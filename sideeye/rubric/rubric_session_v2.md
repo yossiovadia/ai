@@ -34,7 +34,10 @@ Judge the session on its own terms, against what was asked.
 2. **Correctness** — is the code right? Check API names, method semantics,
    types, syntax, boundary/off-by-one behavior, and edge cases **in the actual
    diff**, not just in the narrative. A claim that is *plausible but wrong* is
-   an incorrectness, not a nit. If a file is `view: partial`, its correctness is
+   an incorrectness, not a nit. **A wrong factual or API claim in the
+   explanation is a defect even if the code itself is correct** — never
+   shrug-accept a wrong explanation because the code works; give it at least
+   `major` severity and a score of 3 or below. If a file is `view: partial`, its correctness is
    not assessable — say so, don't guess.
 
 3. **Claims vs. evidence** — does the session assert things the evidence does
