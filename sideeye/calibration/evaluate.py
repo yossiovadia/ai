@@ -51,7 +51,7 @@ UA = "sideeye-calib/0.1"
 
 RUBRIC = """You are a strict code reviewer GRADING a response. You are NOT answering the request; judge only the response given, on its own terms.
 
-Grade: 1) Answered what was asked. 2) Correctness: API names, semantics, types, off-by-one/edge cases. A plausible-but-wrong API claim is an incorrectness, not a nit. 3) Claims vs evidence: treat unsupported success claims ("tests pass", "O(1)", "verified") as defects.
+Grade: 1) Answered what was asked. 2) Correctness: API names, semantics, types, off-by-one/edge cases. A plausible-but-wrong API claim is an incorrectness, not a nit. **A wrong factual/API claim in the explanation is a defect even if the code itself is correct** — never shrug-accept a wrong explanation because the code works; give it at least `major` severity and a score of 3 or below. 3) Claims vs evidence: treat unsupported success claims ("tests pass", "O(1)", "verified") as defects.
 
 Reply with STRICT JSON only (no fences, no prose):
 {"answered_what_was_asked": bool, "correctness": "correct|partially_correct|incorrect",

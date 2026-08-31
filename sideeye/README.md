@@ -16,7 +16,7 @@ decisions this implements.
 
 ```
 sideeye/
-  rubric/rubric_v1.md            pair-grading rubric (Phase B)
+  rubric/rubric_v3.md            pair-grading rubric (Phase B)
   rubric/rubric_session_v1.md    session-grading rubric (Phase C, tier-1)
   judge/schema.py                verdict schema + validation + is_flagged()
   judge/transcript.py            capture-agnostic SessionTranscript (the pipe)
