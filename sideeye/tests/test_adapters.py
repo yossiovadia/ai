@@ -41,6 +41,44 @@ def test_resolve_current_falls_back_when_cwd_has_no_session(monkeypatch, tmp_pat
     assert got == new and fell_back is True
 
 
+def test_resolve_current_walks_up_to_parent_project(monkeypatch, tmp_path):
+    """Running from sideeye/calibration finds the praxis-ai project session."""
+    monkeypatch.setattr(A, "CLAUDE_DIR", tmp_path)
+    # Simulate cwd = /Users/x/proj/sideeye/calibration (no project dir for this)
+    cwd = "/Users/x/proj/sideeye/calibration"
+    monkeypatch.setattr(os, "getcwd", lambda: cwd)
+    monkeypatch.setattr(pathlib.Path, "cwd", classmethod(lambda cls: pathlib.Path(cwd)))
+    # Parent /Users/x/proj has a project dir with a session
+    parent_proj = tmp_path / "-Users-x-proj"
+    parent_proj.mkdir(parents=True)
+    sess = parent_proj / "sess.jsonl"
+    sess.write_text("{}", encoding="utf-8")
+    got, fell_back = A.resolve_current_session("claude")
+    assert got == sess and fell_back is False
+
+
+def test_resolve_current_walk_up_prefers_closest_ancestor(monkeypatch, tmp_path):
+    """Walk-up picks the most specific (deepest) ancestor that has sessions."""
+    monkeypatch.setattr(A, "CLAUDE_DIR", tmp_path)
+    cwd = "/Users/x/proj/sub/deep"
+    monkeypatch.setattr(os, "getcwd", lambda: cwd)
+    monkeypatch.setattr(pathlib.Path, "cwd", classmethod(lambda cls: pathlib.Path(cwd)))
+    # /Users/x/proj has a session (grandparent)
+    gp = tmp_path / "-Users-x-proj"
+    gp.mkdir(parents=True)
+    gp_sess = gp / "old.jsonl"
+    gp_sess.write_text("{}", encoding="utf-8")
+    os.utime(gp_sess, (1000, 1000))
+    # /Users/x/proj/sub also has a session (parent — closer)
+    parent = tmp_path / "-Users-x-proj-sub"
+    parent.mkdir(parents=True)
+    p_sess = parent / "closer.jsonl"
+    p_sess.write_text("{}", encoding="utf-8")
+    os.utime(p_sess, (2000, 2000))
+    got, fell_back = A.resolve_current_session("claude")
+    assert got == p_sess and fell_back is False
+
+
 def test_resolve_current_none_when_no_sessions_anywhere(monkeypatch, tmp_path):
     monkeypatch.setattr(A, "CLAUDE_DIR", tmp_path)
     monkeypatch.setattr(os, "getcwd", lambda: "/private/tmp")
