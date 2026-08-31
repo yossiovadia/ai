@@ -54,3 +54,9 @@ docs/**/
 !docs/filters/tcp/*/
 !docs/operating/
 !docs/proposals/
+# sideeye calibration run outputs (keep frozen inputs + code; outputs regenerate)
+sideeye/calibration/*_verdicts.jsonl
+sideeye/calibration/progress.jsonl
+sideeye/calibration/eval.log
+sideeye/calibration/__pycache__/
+sideeye/calibration/STOP
