@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/manage-keys.sh create <username> [key-name] [group]
 #   ./scripts/manage-keys.sh list [username]
+#   ./scripts/manage-keys.sh list-groups
 #   ./scripts/manage-keys.sh revoke <username> [key-name]
 #   ./scripts/manage-keys.sh revoke-user <username>
 #
@@ -26,6 +27,7 @@ Usage: ./scripts/manage-keys.sh <command> [options]
 Commands:
   create <email> [group]              Create an API key for a user
   list [email]                        List active keys (all or for one user)
+  list-groups                         Show all groups and their member counts
   revoke <email>                      Disable a user's keys (keeps history)
   delete <email>                      Permanently remove user and usage data
 
@@ -37,6 +39,7 @@ Examples:
   ./scripts/manage-keys.sh create chris.wright@redhat.com executive
   ./scripts/manage-keys.sh list
   ./scripts/manage-keys.sh list noyitz@redhat.com
+  ./scripts/manage-keys.sh list-groups
   ./scripts/manage-keys.sh revoke noyitz@redhat.com
   ./scripts/manage-keys.sh delete test-user@redhat.com
 
@@ -169,6 +172,31 @@ print('\nTotal: {} key(s)'.format(len(keys)))
 "
     ;;
 
+list-groups)
+    RESPONSE=$(oc -n "$NAMESPACE" exec postgresql-0 -- psql -U aigateway -d aigateway -t -q -c "
+        SELECT g, count(DISTINCT username) AS users, count(*) AS keys
+        FROM api_keys, unnest(user_groups) AS g
+        WHERE status = 'active'
+        GROUP BY g
+        ORDER BY users DESC, g;
+    " 2>/dev/null)
+
+    if [[ -z "$RESPONSE" ]]; then
+        echo "No groups found."
+        exit 0
+    fi
+
+    printf '%-20s %s %s\n' 'GROUP' 'USERS' 'KEYS'
+    printf '%-20s %s %s\n' '-----' '-----' '----'
+    echo "$RESPONSE" | while IFS='|' read -r grp users keys; do
+        grp=$(echo "$grp" | xargs)
+        users=$(echo "$users" | xargs)
+        keys=$(echo "$keys" | xargs)
+        [[ -z "$grp" ]] && continue
+        printf '%-20s %5s %5s\n' "$grp" "$users" "$keys"
+    done
+    ;;
+
 revoke)
     if [[ -z "${1:-}" ]]; then
         echo "Usage: $0 revoke <email> [key-name]"
@@ -275,7 +303,7 @@ for k in json.load(sys.stdin).get('data', []):
 
 *)
     echo "Unknown action: $ACTION"
-    echo "Usage: $0 <create|list|revoke|delete> ..."
+    echo "Usage: $0 <create|list|list-groups|revoke|delete> ..."
     exit 1
     ;;
 esac
