@@ -2,9 +2,12 @@
 # Manage API keys on the dogfood cluster.
 #
 # Usage:
-#   ./scripts/manage-keys.sh create <username> [key-name] [group]
+#   ./scripts/manage-keys.sh create <username> [group] [--admin]
 #   ./scripts/manage-keys.sh list [username]
 #   ./scripts/manage-keys.sh list-groups
+#   ./scripts/manage-keys.sh list-admins
+#   ./scripts/manage-keys.sh set-admin <username>
+#   ./scripts/manage-keys.sh remove-admin <username>
 #   ./scripts/manage-keys.sh revoke <username> [key-name]
 #   ./scripts/manage-keys.sh revoke-user <username>
 #
@@ -25,9 +28,12 @@ show_help() {
 Usage: ./scripts/manage-keys.sh <command> [options]
 
 Commands:
-  create <email> [group]              Create an API key for a user
+  create <email> [group] [--admin]    Create an API key for a user
   list [email]                        List active keys (all or for one user)
   list-groups                         Show all groups and their member counts
+  list-admins                         Show current dashboard admins
+  set-admin <email>                   Grant dashboard admin access
+  remove-admin <email>                Revoke dashboard admin access
   revoke <email>                      Disable a user's keys (keeps history)
   delete <email>                      Permanently remove user and usage data
 
@@ -36,10 +42,13 @@ Options:
 
 Examples:
   ./scripts/manage-keys.sh create noyitz@redhat.com
-  ./scripts/manage-keys.sh create chris.wright@redhat.com executive
+  ./scripts/manage-keys.sh create chris.wright@redhat.com executive --admin
   ./scripts/manage-keys.sh list
   ./scripts/manage-keys.sh list noyitz@redhat.com
   ./scripts/manage-keys.sh list-groups
+  ./scripts/manage-keys.sh list-admins
+  ./scripts/manage-keys.sh set-admin someone@redhat.com
+  ./scripts/manage-keys.sh remove-admin someone@redhat.com
   ./scripts/manage-keys.sh revoke noyitz@redhat.com
   ./scripts/manage-keys.sh delete test-user@redhat.com
 
@@ -77,19 +86,69 @@ api() {
         -H "X-MaaS-Group: $ADMIN_GROUP"
 }
 
+# ── Admin helpers ────────────────────────────────────────────
+
+get_admin_list() {
+    oc -n "$NAMESPACE" get deployment metering-service \
+        -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="ADMIN_USERS")].value}' 2>/dev/null
+}
+
+set_admin_list() {
+    local new_list="$1"
+    oc -n "$NAMESPACE" set env deployment/metering-service "ADMIN_USERS=$new_list" > /dev/null 2>&1
+}
+
+add_admin() {
+    local email="$1"
+    local current
+    current=$(get_admin_list)
+    if echo ",$current," | grep -q ",$email,"; then
+        echo "$email is already an admin"
+        return 0
+    fi
+    if [[ -z "$current" ]]; then
+        set_admin_list "$email"
+    else
+        set_admin_list "$current,$email"
+    fi
+    echo "Added $email as admin (deployment will restart)"
+}
+
+remove_admin() {
+    local email="$1"
+    local current
+    current=$(get_admin_list)
+    local new_list
+    new_list=$(echo "$current" | tr ',' '\n' | grep -v "^${email}$" | paste -sd ',' -)
+    if [[ "$current" == "$new_list" ]]; then
+        echo "$email is not an admin"
+        return 0
+    fi
+    set_admin_list "$new_list"
+    echo "Removed $email from admins (deployment will restart)"
+}
+
 # ── Actions ──────────────────────────────────────────────────
 
 case "$ACTION" in
 
 create)
     if [[ -z "${1:-}" ]]; then
-        echo "Usage: $0 create <email> [group]"
+        echo "Usage: $0 create <email> [group] [--admin]"
         echo "  e.g.: $0 create noyitz@redhat.com"
         exit 1
     fi
     USERNAME="$1"
     KEY_NAME="dogfood-${USERNAME%%@*}"
-    GROUP="${2:-ai-eng}"
+    MAKE_ADMIN=false
+    GROUP="ai-eng"
+    for arg in "${@:2}"; do
+        if [[ "$arg" == "--admin" ]]; then
+            MAKE_ADMIN=true
+        else
+            GROUP="$arg"
+        fi
+    done
 
     RESPONSE=$(api -X POST "http://localhost:18080/v1/api-keys" \
         -H "X-MaaS-Username: $USERNAME" \
@@ -130,6 +189,10 @@ create)
     echo "export OPENAI_API_KEY=\"$KEY\""
     echo "codex"
     echo ""
+
+    if [[ "$MAKE_ADMIN" == "true" ]]; then
+        add_admin "$USERNAME"
+    fi
     ;;
 
 list)
@@ -299,9 +362,37 @@ for k in json.load(sys.stdin).get('data', []):
     echo "Deleted all data for $USERNAME"
     ;;
 
+list-admins)
+    ADMINS=$(get_admin_list)
+    if [[ -z "$ADMINS" ]]; then
+        echo "No admins configured."
+    else
+        echo "Dashboard admins:"
+        echo "$ADMINS" | tr ',' '\n' | while read -r admin; do
+            echo "  $admin"
+        done
+    fi
+    ;;
+
+set-admin)
+    if [[ -z "${1:-}" ]]; then
+        echo "Usage: $0 set-admin <email>"
+        exit 1
+    fi
+    add_admin "$1"
+    ;;
+
+remove-admin)
+    if [[ -z "${1:-}" ]]; then
+        echo "Usage: $0 remove-admin <email>"
+        exit 1
+    fi
+    remove_admin "$1"
+    ;;
+
 *)
     echo "Unknown action: $ACTION"
-    echo "Usage: $0 <create|list|list-groups|revoke|delete> ..."
+    echo "Usage: $0 <create|list|list-groups|list-admins|set-admin|remove-admin|revoke|delete> ..."
     exit 1
     ;;
 esac
