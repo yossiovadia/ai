@@ -94,7 +94,7 @@ create)
     RESPONSE=$(api -X POST "http://localhost:18080/v1/api-keys" \
         -H "X-MaaS-Username: $USERNAME" \
         -H "X-MaaS-Group: [\"$GROUP\"]" \
-        -d "{\"name\":\"$KEY_NAME\",\"description\":\"Dogfood gateway key for $USERNAME\"}")
+        -d "{\"name\":\"$KEY_NAME\",\"description\":\"Dogfood gateway key for $USERNAME\",\"expiresIn\":\"8760h\"}")
 
     KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('key',''))" 2>/dev/null)
     EXPIRES=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('expiresAt','?'))" 2>/dev/null)
@@ -120,17 +120,15 @@ create)
     echo ""
     echo "  Key: $KEY"
     echo ""
-    echo "  Claude Code (via script):"
-    echo "    ./scripts/connect-dogfood.sh $KEY"
-    echo ""
-    echo "  Claude Code (manual — paste all 4 lines):"
-    echo "    export ANTHROPIC_BASE_URL=\"https://$ANTHROPIC_ROUTE\""
-    echo "    export ANTHROPIC_API_KEY=\"$KEY\""
-    echo "    claude --settings '{\"env\":{\"CLAUDE_CODE_USE_VERTEX\":\"\",\"ANTHROPIC_VERTEX_PROJECT_ID\":\"\",\"CLOUD_ML_REGION\":\"\"}}'"
-    echo "    # Pick option 2 at login, paste the key above when prompted"
+    echo "  Claude Code:"
+    echo "export ANTHROPIC_BASE_URL=\"https://$ANTHROPIC_ROUTE\""
+    echo "export ANTHROPIC_API_KEY=\"$KEY\""
+    echo "claude --settings '{\"env\":{\"CLAUDE_CODE_USE_VERTEX\":\"\",\"ANTHROPIC_VERTEX_PROJECT_ID\":\"\",\"CLOUD_ML_REGION\":\"\"}}'"
     echo ""
     echo "  Codex:"
-    echo "    OPENAI_API_KEY=\"$KEY\" codex"
+    echo "export OPENAI_BASE_URL=\"https://${OPENAI_ROUTE}/v1\""
+    echo "export OPENAI_API_KEY=\"$KEY\""
+    echo "codex"
     echo ""
     ;;
 
