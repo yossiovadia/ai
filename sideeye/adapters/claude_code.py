@@ -22,8 +22,11 @@ Code-review artifact: this adapter extracts the set of files the session
 touched (Edit/Write tool_use `file_path`s) so the judge can be given a real
 git diff of the code (see sideeye.judge.code_artifact). The tool_use blocks
 themselves are rendered as *references* (`[edited <path>]`), not as truncated
-code — the 400-char cap that used to blind the judge to the code is gone; the
-actual code lives in the diff artifact, once, not double-spent in both places.
+code — the actual code lives in the diff artifact, once, not double-spent.
+
+Tool result content is sent in full — no truncation. Caps blind the judge
+to evidence and produce false "unverifiable" findings. The cost of judging
+a large session is the caller's choice, not a silent truncation.
 """
 from __future__ import annotations
 
@@ -50,12 +53,15 @@ _SYSTEM_INJECT_MARKERS = (
     "<hindsight_memories>", "UserPromptSubmit hook",
 )
 
-# Evidence (test/build/command output) is kept head-N + tail-M with an elision
-# marker: failures print mid-run, the summary prints last, the command first,
-# so head+tail covers all three. Replaces the old head-only 2000-char cap,
-# which cut the summary line off a long test run.
-_EVIDENCE_HEAD = 1500
-_EVIDENCE_TAIL = 500
+# Markers that identify Side-Eye's own escalation output — stripped from the
+# tail of the transcript so the judge doesn't review its own invocation.
+_ESCALATION_MARKERS = (
+    "Escalating to claude-",
+    "judge cost:",
+    "score=",
+    "severity=",
+    "claims_supported=",
+)
 
 # Claude Code tools that write files — their `file_path` is collected for the
 # code-review artifact. Bash/Read/etc. are not file edits.
@@ -77,10 +83,8 @@ def _has_tool_result(content) -> bool:
         isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
 
 
-def _head_tail(text: str, head: int, tail: int) -> str:
-    if len(text) <= head + tail:
-        return text
-    return text[:head] + f"\n... ({len(text) - head - tail} chars elided) ...\n" + text[-tail:]
+def _is_escalation_output(text: str) -> bool:
+    return any(m in text for m in _ESCALATION_MARKERS)
 
 
 def _render_content(content, touched=None) -> str:
@@ -123,8 +127,7 @@ def _render_content(content, touched=None) -> str:
             c = b.get("content")
             if isinstance(c, list):
                 c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
-            txt = _head_tail(str(c), _EVIDENCE_HEAD, _EVIDENCE_TAIL)
-            parts.append(f"[tool_result: {txt}]")
+            parts.append(f"[tool_result: {c}]")
         # thinking: intentionally skipped
     return "\n".join(p for p in parts if p)
 
@@ -179,6 +182,10 @@ def parse_session(path):
             else:
                 turns.append({"role": "user", "text": text})       # actual human, sacred
 
+    # Strip trailing turns that are Side-Eye's own escalation invocation —
+    # the judge shouldn't review the review itself.
+    while turns and _is_escalation_output(turns[-1]["text"]):
+        turns.pop()
     if not turns:
         return None
     usage = None
