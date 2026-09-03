@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Side-Eye — draft cheap, review expensive</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: #010409;
+  color: #c9d1d9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 16px 56px;
+  min-height: 100vh;
+}
+h1 {
+  font-size: 19px; font-weight: 600; letter-spacing: .2px;
+  color: #e6edf3; margin: 0 0 8px; text-align: center;
+}
+.sub {
+  margin: 0 0 22px; font-size: 13px; line-height: 1.55;
+  color: #8b949e; text-align: center; max-width: 580px;
+}
+.controls {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  gap: 8px; margin-bottom: 18px;
+}
+button {
+  font-family: inherit; font-size: 12.5px; line-height: 1;
+  color: #c9d1d9; background: #161b22; border: 1px solid #30363d;
+  border-radius: 6px; padding: 8px 12px; cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+button:hover { border-color: #8b949e; }
+button:focus-visible { outline: 2px solid #1f6feb; outline-offset: 2px; }
+.tab.active { background: rgba(31, 111, 235, .15); border-color: #1f6feb; color: #58a6ff; }
+.ghost { color: #8b949e; }
+.divider { width: 1px; height: 20px; background: #30363d; margin: 0 4px; }
+.term {
+  width: 100%; max-width: 860px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
+  overflow: hidden;
+}
+.titlebar {
+  display: flex; align-items: center; gap: 7px;
+  padding: 11px 14px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.dot.r { background: #ff5f57; }
+.dot.y { background: #febc2e; }
+.dot.g { background: #28c840; }
+.title {
+  margin-left: 6px; font-size: 12px; color: #8b949e;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.view {
+  height: 470px; overflow: auto;
+  padding: 20px 22px 26px;
+  font-size: 13px; line-height: 1.62;
+  scrollbar-width: thin; scrollbar-color: #30363d transparent;
+}
+.line { white-space: pre; min-height: 1.62em; }
+.user { color: #58a6ff; }
+.dim { color: #8b949e; }
+.hdr { color: #e3b341; font-weight: 700; }
+.cost { color: #3fb950; }
+.ok { color: #3fb950; }
+.warn { color: #d29922; }
+.major { color: #f85149; }
+.medium { color: #d29922; }
+.low { color: #8b949e; }
+.cursor {
+  display: inline-block; width: .62em; height: 1.05em;
+  background: #58a6ff; vertical-align: -0.18em;
+  animation: blink 1.1s steps(2, start) infinite;
+}
+@keyframes blink { to { visibility: hidden; } }
+.footer {
+  margin: 18px 0 0; max-width: 700px; text-align: center;
+  font-size: 12px; line-height: 1.6; color: #8b949e;
+}
+@media (max-width: 600px) {
+  body { padding: 24px 10px 40px; }
+  h1 { font-size: 16px; }
+  .view { height: 420px; padding: 14px 12px 20px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none; }
+  button { transition: none; }
+}
+</style>
+</head>
+<body>
+<h1>Side-Eye — draft cheap, review expensive</h1>
+<p class="sub">The cheap model writes the code. When in doubt, ask the expensive one — without leaving your session.</p>
+<div class="controls">
+  <button id="tabA" class="tab active" type="button">/escalate-last — quick advice</button>
+  <button id="tabB" class="tab" type="button">/escalate-all — full session review</button>
+  <button id="tabC" class="tab" type="button">side-eye vs fable-only — the cost</button>
+  <span class="divider" aria-hidden="true"></span>
+  <button id="replay" class="ghost" type="button">replay</button>
+  <button id="speed" class="ghost" type="button" aria-label="toggle playback speed">1×</button>
+</div>
+<div class="term">
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="title">claude code — qwen3-coder via praxis gateway</span>
+  </div>
+  <div class="view" id="view"></div>
+</div>
+<p class="footer">Review, not re-answer — the judge critiques, the cheap model revises. The expensive model reads (input tokens); the cheap model writes (output tokens) — that asymmetry is the product.</p>
+<script>
+(function () {
+  'use strict';
+
+  var SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+
+  // Line kinds:
+  //   user  — typed char-by-char (35ms/char) after a blinking-cursor pause
+  //   wait  — braille spinner resolves to its final line (verbatim)
+  //   blank — spacing
+  //   slow  — payoff lines (FABLE / VERDICT), 260ms apart
+  //   other — out / dim / hdr / cost, 180ms apart
+  var SCENES = {
+    A: [
+      { k: 'user', t: 'adding retries to the gateway client — 3 fixed retries, 200ms sleep between. good enough?' },
+      { k: 'blank' },
+      { k: 'out', t: 'qwen: good enough for a dev tool: 3 attempts, fixed 200ms sleep,' },
+      { k: 'out', t: '      then give up with the last error. shipping it.' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> 6/6 gateway_client tests green</span>' },
+      { k: 'blank' },
+      { k: 'user', t: '/escalate-last --turns=2' },
+      { k: 'blank' },
+      { k: 'dim', t: 'sideeye · advice mode' },
+      { k: 'dim', t: '  packet: last 2 exchanges (2.8k tokens) -> judge: claude-fable-5' },
+      { k: 'dim', t: '  route: metered praxis gateway' },
+      { k: 'wait', pre: '  ', live: ' waiting for judge…', final: '  ⠋ waiting for judge…            → done in 2.1s', dur: 2100 },
+      { k: 'blank' },
+      { k: 'hdr', t: 'FABLE — SECOND OPINION' },
+      { k: 'slow', t: '  Fixed 200ms is wrong both ways: fast enough to stampede a model' },
+      { k: 'slow', t: '  server mid-KV-thrash, and 3 attempts gives up before a cold shard' },
+      { k: 'slow', t: '  warms. Bigger: you retry 429 like a 5xx — 429 is a rate limit,' },
+      { k: 'slow', t: '  not a failure. Honor retry-after; capped exponential backoff' },
+      { k: 'slow', t: '  with jitter for the rest.' },
+      { k: 'blank' },
+      { k: 'mix', html: '<span class="dim">  confidence: high · </span><span class="cost">judge cost: $0.08</span>' },
+      { k: 'blank' },
+      { k: 'dim', t: '· advice lands back in the session — qwen sees it, responds ·' },
+      { k: 'blank' },
+      { k: 'out', t: 'qwen: fable is right — 429 is a rate limit, not a failure, and fixed' },
+      { k: 'out', t: '      sleeps stampede a shard that is still warming up. switching to' },
+      { k: 'out', t: '      capped exponential backoff with full jitter, honoring' },
+      { k: 'out', t: '      retry-after on 429. want me to?' },
+      { k: 'blank' },
+      { k: 'user', t: 'yep' },
+      { k: 'blank' },
+      { k: 'wait', pre: '  ', live: ' rewriting the retry loop…', final: '  ⠴ rewriting the retry loop…          → done in 2.4s', dur: 2400 },
+      { k: 'out', t: 'qwen: done — capped at 5s with full jitter, 429 honors retry-after,' },
+      { k: 'out', t: '      5xx backs off.' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> 7/7 gateway_client tests green</span>' },
+      { k: 'cost', t: '  total: $0.08 judge reads · $0.00 qwen writes — one wrong instinct caught in 2s' }
+    ],
+    B: [
+      { k: 'user', t: 'dashboard shows CACHED=0 on every claude-code request — the upstream is clearly returning cache tokens. find the bug' },
+      { k: 'blank' },
+      { k: 'out', t: 'qwen: found it. in token_usage/providers.rs the openai parser never reads' },
+      { k: 'out', t: '      prompt_tokens_details.cached_tokens, so .with_cache(0, 0) was being' },
+      { k: 'out', t: '      passed. wired it through; the anthropic path already summed' },
+      { k: 'out', t: '      cache_read + cache_write into actual_input.' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> 6/6 token_usage tests green</span>' },
+      { k: 'blank' },
+      { k: 'user', t: '/escalate-all' },
+      { k: 'blank' },
+      { k: 'dim', t: 'sideeye · full session review' },
+      { k: 'mix', html: '<span class="dim">  session: praxis-ai · 47 turns · current session </span><span class="ok">✓</span>' },
+      { k: 'dim', t: '  building sighted packet:' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> transcript flattened            31k tokens</span>' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> git diff -U999999               3 files touched (+412 / −38)</span>' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> test output captured            exit 0 · summary line intact</span>' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> coverage manifest               3 files full view · 0 partial</span>' },
+      { k: 'dim', t: '  judge: claude-fable-5 · via metered praxis gateway' },
+      { k: 'wait', pre: '  ', live: ' reviewing…', final: '  ⠙ reviewing…                       → done in 9.4s', dur: 9400 },
+      { k: 'blank' },
+      { k: 'hdr', t: 'VERDICT — SCORE 3/5 · SEVERITY MAJOR' },
+      { k: 'slow', html: '  <span class="ok">✓</span> accomplished the ask — the json path now carries the cache split' },
+      { k: 'slow', html: '  <span class="major">✗ MAJOR</span> the fix is inert for your dashboard: claude-code rides the SSE' },
+      { k: 'slow', t: '            streaming path, and parse_anthropic_event never extracts' },
+      { k: 'slow', t: '            cache_read / cache_write from message_start. CACHED stays 0' },
+      { k: 'slow', t: '            on every real session — cost still overstated (~$0.76 vs ~$0.15).' },
+      { k: 'slow', html: '  <span class="warn">⚠ LOW</span>     no regression test pins the anthropic cache split' },
+      { k: 'blank' },
+      { k: 'dim', t: '  verdict saved → verdicts/2026-08-31.jsonl (adapter v2 · rubric v3)' },
+      { k: 'cost', t: '  judge cost: $0.31 · session generation cost: $0.00 (internal qwen)' },
+      { k: 'blank' },
+      { k: 'dim', t: '· verdict lands back in the session — qwen sees it, responds ·' },
+      { k: 'blank' },
+      { k: 'out', t: 'qwen: fable is right — i fixed the json path, but claude-code rides the' },
+      { k: 'out', t: '      sse streaming path (message_start / message_delta). that fix was' },
+      { k: 'out', t: '      correct but dead for your dashboard. want me to wire the cache' },
+      { k: 'out', t: '      split through parse_anthropic_event too?' },
+      { k: 'blank' },
+      { k: 'user', t: 'yep' },
+      { k: 'blank' },
+      { k: 'wait', pre: '  ', live: ' wiring the cache split through streaming.rs…', final: '  ⠹ wiring the cache split through streaming.rs… → done in 3.8s', dur: 3800 },
+      { k: 'out', t: 'qwen: done. message_start now carries cache_read / cache_write and' },
+      { k: 'out', t: '      message_delta the output split; added the regression test.' },
+      { k: 'mix', html: '<span class="dim">    </span><span class="ok">✓</span><span class="dim"> 7/7 token_usage tests green — CACHED populates on the streaming path</span>' },
+      { k: 'cost', t: '  total: $0.31 judge reads · $0.00 qwen writes — one MAJOR caught before it shipped' }
+    ],
+    C: [
+      { k: 'hdr', t: 'ONE 1M-TOKEN CODING TASK — RUN TWO WAYS' },
+      { k: 'blank' },
+      { k: 'dim', t: 'task: wire the cache split through the sse streaming path (the bug the review flagged)' },
+      { k: 'dim', t: 'workload: 1,000,000 tokens = 800k input + 200k output' },
+      { k: 'dim', t: 'pricing: fable $10/M in · $50/M out (5×) · qwen self-hosted $0 · emulated' },
+      { k: 'blank' },
+      { k: 'hdr', t: 'PATH A — SIDE-EYE  (qwen writes, fable reviews)' },
+      { k: 'wait', pre: '  ', live: ' qwen drafting…', final: '  ⠹ qwen drafting…                → 200k code · 6/6 tests green', dur: 2400 },
+      { k: 'dim', t: '  generation: 800k in + 200k out, all on qwen — $0.00 (self-hosted)' },
+      { k: 'wait', pre: '  ', live: ' fable reviewing the sighted packet…', final: '  ⠴ fable reviewing the sighted packet… → verdict: correct, ship it', dur: 1800 },
+      { k: 'dim', t: '  fable reads code+diff+tests (200k in) · writes a terse verdict (5k out):' },
+      { k: 'mix', html: '<span class="dim">    200k in  × $10/M  = </span><span class="cost">$2.00</span>' },
+      { k: 'mix', html: '<span class="dim">      5k out × $50/M  = </span><span class="cost">$0.25</span>' },
+      { k: 'cost', t: '  PATH A TOTAL: $2.25' },
+      { k: 'blank' },
+      { k: 'hdr', t: 'PATH B — FABLE-ONLY  (fable writes everything)' },
+      { k: 'wait', pre: '  ', live: ' fable drafting…', final: '  ⠦ fable drafting…                 → 200k code · 6/6 tests green', dur: 2400 },
+      { k: 'dim', t: '  fable reads the context and writes the code:' },
+      { k: 'mix', html: '<span class="dim">    800k in  × $10/M  = </span><span class="cost">$8.00</span>' },
+      { k: 'mix', html: '<span class="dim">    200k out × $50/M  = </span><span class="cost">$10.00</span>' },
+      { k: 'cost', t: '  PATH B TOTAL: $18.00' },
+      { k: 'blank' },
+      { k: 'hdr', t: 'SAME OUTPUT — 8× THE BILL' },
+      { k: 'mix', html: '<span class="dim">  both ship the module: </span><span class="ok">6/6 tests green</span><span class="dim"> either way.</span>' },
+      { k: 'slow', t: '  output tokens cost 5× input ($50/M vs $10/M). fable-only pays $50/M for' },
+      { k: 'slow', t: '  every token it writes. side-eye keeps fable on the read side ($10/M)' },
+      { k: 'slow', t: '  and dumps all the writing on free qwen — fable just reviews.' },
+      { k: 'blank' },
+      { k: 'mix', html: '<span class="cost">$2.25</span><span class="dim">  side-eye   vs   </span><span class="cost">$18.00</span><span class="dim">  fable-only   →   </span><span class="ok">8× cheaper, same work</span>' }
+    ]
+  };
+
+  var view = document.getElementById('view');
+  var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  var speed = 1, rafId = 0, timeline = [], t0 = 0, baseElapsed = 0, current = 'A';
+
+  function now() { return performance.now(); }
+  function elapsed() { return baseElapsed + (now() - t0) * speed; }
+  function stop() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
+
+  // Single rAF pump over a pre-built absolute-time timeline. One loop to cancel —
+  // no orphaned timeouts when a tab switch or replay happens mid-animation.
+  function tick() {
+    var e = elapsed();
+    while (timeline.length && timeline[0].at <= e) { timeline.shift().fn(); }
+    rafId = timeline.length ? requestAnimationFrame(tick) : 0;
+  }
+
+  function makeLine() {
+    var d = document.createElement('div');
+    d.className = 'line';
+    return d;
+  }
+
+  function appendLine(d) {
+    view.appendChild(d);
+    view.scrollTop = view.scrollHeight;
+  }
+
+  function elFor(line) {
+    var d = makeLine();
+    if (line.html) { d.innerHTML = line.html; return d; }
+    var cls = line.k === 'dim' ? 'dim' : line.k === 'hdr' ? 'hdr' : line.k === 'cost' ? 'cost' : '';
+    var s = document.createElement('span');
+    if (cls) { s.className = cls; }
+    s.textContent = line.t;
+    d.appendChild(s);
+    return d;
+  }
+
+  function buildTimeline(scene) {
+    var ev = [];
+    var t = 0;
+    function push(at, fn) { ev.push({ at: at, fn: fn }); }
+
+    for (var idx = 0; idx < scene.length; idx++) {
+      var line = scene[idx];
+
+      if (line.k === 'user') {
+        (function (line) {
+          var d = makeLine();
+          var prompt = document.createElement('span');
+          prompt.className = 'user';
+          prompt.textContent = '❯ ';
+          var typed = document.createElement('span');
+          typed.className = 'user';
+          var cur = document.createElement('span');
+          cur.className = 'cursor';
+          d.appendChild(prompt);
+          d.appendChild(typed);
+          d.appendChild(cur);
+          push(t, function () { appendLine(d); }); // append at its scheduled moment, not build time
+          t += 550; // blinking-cursor pause before typing
+          for (var i = 1; i <= line.t.length; i++) {
+            (function (ci) {
+              t += 35;
+              push(t, function () { typed.textContent = line.t.slice(0, ci); });
+            })(i);
+          }
+          push(t, function () { cur.parentNode.removeChild(cur); });
+          t += 260;
+        })(line);
+
+      } else if (line.k === 'wait') {
+        (function (line) {
+          var d = makeLine();
+          var pre = document.createElement('span');
+          pre.className = 'dim';
+          pre.textContent = line.pre;
+          var frame = document.createElement('span');
+          frame.className = 'dim';
+          frame.textContent = SPINNER[0];
+          var live = document.createElement('span');
+          live.className = 'dim';
+          live.textContent = line.live;
+          d.appendChild(pre);
+          d.appendChild(frame);
+          d.appendChild(live);
+          push(t, function () { appendLine(d); }); // append at its scheduled moment, not build time
+          var frames = Math.max(1, Math.round(line.dur / 100));
+          for (var f = 1; f <= frames; f++) {
+            (function (fi) {
+              t += 100;
+              push(t, function () { frame.textContent = SPINNER[fi % SPINNER.length]; });
+            })(f);
+          }
+          var rem = line.dur - frames * 100;
+          if (rem > 0) { t += rem; }
+          push(t, function () {
+            d.textContent = '';
+            var s = document.createElement('span');
+            s.className = 'dim';
+            s.textContent = line.final;
+            d.appendChild(s);
+            view.scrollTop = view.scrollHeight;
+          });
+          t += 240;
+        })(line);
+
+      } else if (line.k === 'blank') {
+        (function () {
+          var d = makeLine();
+          d.innerHTML = '&nbsp;';
+          t += 70;
+          push(t, function () { appendLine(d); });
+        })();
+
+      } else {
+        (function (line) {
+          var d = elFor(line);
+          t += (line.k === 'hdr' || line.k === 'slow' || line.k === 'cost') ? 260 : 180;
+          push(t, function () { appendLine(d); });
+        })(line);
+      }
+    }
+    return ev;
+  }
+
+  function playScene(key) {
+    current = key;
+    stop();
+    view.innerHTML = '';
+    document.getElementById('tabA').classList.toggle('active', key === 'A');
+    document.getElementById('tabB').classList.toggle('active', key === 'B');
+    document.getElementById('tabC').classList.toggle('active', key === 'C');
+    var ev = buildTimeline(SCENES[key]);
+    if (reduced) { // prefers-reduced-motion: final state, instantly
+      for (var i = 0; i < ev.length; i++) { ev[i].fn(); }
+      return;
+    }
+    timeline = ev;
+    t0 = now();
+    baseElapsed = 0;
+    rafId = requestAnimationFrame(tick);
+  }
+
+  document.getElementById('tabA').addEventListener('click', function () { playScene('A'); });
+  document.getElementById('tabB').addEventListener('click', function () { playScene('B'); });
+  document.getElementById('tabC').addEventListener('click', function () { playScene('C'); });
+  document.getElementById('replay').addEventListener('click', function () { playScene(current); });
+
+  var speedBtn = document.getElementById('speed');
+  speedBtn.addEventListener('click', function () {
+    if (rafId) { baseElapsed = elapsed(); t0 = now(); } // re-baseline: no time jump
+    speed = speed === 1 ? 2 : 1;
+    speedBtn.textContent = speed + '×';
+  });
+
+  playScene('A'); // auto-play on load
+})();
+</script>
+</body>
+</html>
