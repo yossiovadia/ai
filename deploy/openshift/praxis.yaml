@@ -238,6 +238,9 @@ data:
               - id: Qwen3.8-27B-FP8
                 display_name: "Qwen3.8-27B-FP8 (self-hosted, $0)"
                 owned_by: vllm
+              - id: Inferact/Qwen3.8-Flash-Next-NVFP4
+                display_name: "Qwen3.8-Flash-Next FP4 (self-hosted, $0)"
+                owned_by: vllm
               - id: claude-opus-4-8
                 display_name: "Claude Opus 4.8"
               - id: claude-sonnet-5
@@ -274,6 +277,10 @@ data:
                 headers:
                   x-model: "Qwen3.8-27B-FP8"
                 cluster: vllm
+              - path_prefix: "/"
+                headers:
+                  x-model: "Inferact/Qwen3.8-Flash-Next-NVFP4"
+                cluster: qwen-flash
               - path_prefix: "/"
                 cluster: anthropic
 
@@ -324,6 +331,10 @@ data:
                 idle_timeout_ms: 45000
                 endpoints:
                   - "10.240.0.10:8000"
+              - name: qwen-flash
+                idle_timeout_ms: 45000
+                endpoints:
+                  - "qwen-flash:8000"
 ---
 # NOTE: provider-credentials Secret is created by deploy.sh from
 # env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY). Do NOT include it
