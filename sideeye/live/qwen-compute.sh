@@ -44,8 +44,8 @@ REGION="${REGION:-${ZONE%-*}}"
 # QWEN_SERVED_MODEL in the env if you rename it.
 SERVED_MODEL="${QWEN_SERVED_MODEL:-Qwen3.8-27B-FP8}"
 # Route to probe for readiness: the unified route (model-based) reaches the box
-# via its vllm cluster; falls back to the qwen-only route if that's all that's set.
-PROBE_ROUTE="${UNIFIED_ROUTE:-${QWEN_ROUTE:-}}"
+# via its vllm cluster.
+PROBE_ROUTE="${UNIFIED_ROUTE:-}"
 
 command -v ibmcloud >/dev/null 2>&1 || die "ibmcloud CLI not found. Install: https://cloud.ibm.com/docs/cli"
 command -v python3  >/dev/null 2>&1 || die "python3 not found (needed to parse ibmcloud JSON)"
@@ -105,7 +105,7 @@ instance_status() {
 wait_for_serving() {
     local timeout="${1:-600}" waited=0 code
     if [ -z "$PROBE_ROUTE" ] || [ -z "${MAAS_API_KEY:-}" ]; then
-        echo "  (UNIFIED_ROUTE/QWEN_ROUTE or MAAS_API_KEY not set — skipping serving check; VM is on,"
+        echo "  (UNIFIED_ROUTE or MAAS_API_KEY not set — skipping serving check; VM is on,"
         echo "   vLLM typically needs another ~1-3 min to load the model + compile cache)"
         return
     fi
