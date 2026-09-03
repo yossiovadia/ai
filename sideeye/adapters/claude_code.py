@@ -61,6 +61,9 @@ _ESCALATION_MARKERS = (
     "score=",
     "severity=",
     "claims_supported=",
+    "sideeye review",
+    "sideeye advise",
+    "/escalate",
 )
 
 # Claude Code tools that write files — their `file_path` is collected for the
