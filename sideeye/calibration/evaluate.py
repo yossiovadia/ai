@@ -8,6 +8,8 @@ against hidden ground truth:
   false_flags   = clean pairs the judge flagged
 Writes <judge_id>_verdicts.jsonl (checkpointed) + <judge_id>_report.md, so
 different judges (local 27B vs claude-fable-5) can share one calibration dir.
+Each verdict record carries `usage` — provider token counts, summed across
+retries for that pair — so total cost can be computed from the verdicts file.
 
 Judge is configurable via env so the same frozen pools can be graded by any
 judge on any machine:
@@ -48,6 +50,13 @@ PROGRESS = HERE / "progress.jsonl"
 REPORT = HERE / f"{JUDGE_ID}_report.md"
 STOP = HERE / "STOP"
 UA = "sideeye-calib/0.1"
+# Some frontier models (claude-fable-5) reject `temperature` with a 400.
+# When the server tells us, drop it for the rest of the run.
+_temperature_dropped = False
+
+
+class JudgeRefused(Exception):
+    """stop_reason=refusal — retrying the identical prompt is futile."""
 
 RUBRIC = """You are a strict code reviewer GRADING a response. You are NOT answering the request; judge only the response given, on its own terms.
 
@@ -61,26 +70,48 @@ Reply with STRICT JSON only (no fences, no prose):
 A clean, correct answer scores 5 with empty issues. Do not invent problems; grade substance, not style."""
 
 
-def chat(payload: dict, timeout: int = 420) -> str:
+def _add_usage(dst: dict, src: dict | None):
+    """Sum provider usage fields (both API shapes); accumulates across retries."""
+    for k, v in (src or {}).items():
+        if isinstance(v, int):
+            dst[k] = dst.get(k, 0) + v
+
+
+def chat(payload: dict, timeout: int = 420, usage: dict | None = None) -> str:
+    global _temperature_dropped
     body = {"model": MODEL, "max_tokens": 2500, "temperature": 0.1, **payload}
     if API_STYLE == "anthropic":
         messages = payload.get("messages", [])
         sys_msgs = [m["content"] for m in messages if m["role"] == "system"]
         user_msgs = [m["content"] for m in messages if m["role"] == "user"]
+        req = {"model": MODEL, "system": "".join(sys_msgs),
+               "messages": [{"role": "user", "content": "".join(user_msgs)}],
+               "max_tokens": 2500}
+        if not _temperature_dropped:
+            req["temperature"] = 0.1
         resp = requests.post(BASE, headers={
             "x-api-key": API_KEY, "anthropic-version": "2023-06-01",
             "content-type": "application/json", "user-agent": UA},
-            json={"model": MODEL, "system": "".join(sys_msgs),
-                  "messages": [{"role": "user", "content": "".join(user_msgs)}],
-                  "max_tokens": 2500, "temperature": 0.1}, timeout=timeout)
+            json=req, timeout=timeout)
         if resp.status_code >= 400:
             detail = resp.text[:500]
             try:
                 detail = (resp.json().get("error") or {}).get("message") or detail
             except ValueError:
                 pass
+            if not _temperature_dropped and "temperature" in detail.lower():
+                _temperature_dropped = True
+                log_progress({"step": "adapt", "ok": True,
+                              "note": "model rejects temperature; dropped for rest of run"})
+                return ""
             raise urllib.error.URLError(f"{resp.status_code} from {BASE}: {detail}")
         data = resp.json()
+        if data.get("stop_reason") == "refusal":
+            if usage is not None:
+                _add_usage(usage, data.get("usage"))
+            raise JudgeRefused(f"{MODEL} refused the prompt (stop_reason=refusal)")
+        if usage is not None:
+            _add_usage(usage, data.get("usage"))
         for b in data.get("content", []):
             if b.get("type") == "text":
                 return b.get("text", "")
@@ -89,7 +120,10 @@ def chat(payload: dict, timeout: int = 420) -> str:
     req = urllib.request.Request(BASE, data=body, method="POST",
                                  headers={"content-type": "application/json", "user-agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))["choices"][0]["message"]["content"]
+        data = json.loads(r.read().decode("utf-8"))
+        if usage is not None:
+            _add_usage(usage, data.get("usage"))
+        return data["choices"][0]["message"]["content"]
 
 
 def strict_json(text: str):
@@ -140,24 +174,33 @@ def main():
                   "\n\n## The response under review\n" + p["answer"] +
                   "\n\nGrade the response now. Do NOT write any reasoning or explanation before or after it.\nReply with the strict JSON verdict object ONLY — one JSON object, no prose, no fences, no score 6-10.")
         verdict = None
+        usage = {}
+        refused = False
         for _ in range(8):
             try:
                 raw = chat({"messages": [
                     {"role": "system", "content": RUBRIC},
-                    {"role": "user", "content": prompt}]}, timeout=420)
+                    {"role": "user", "content": prompt}]},
+                    timeout=420, usage=usage)
                 if not raw or not raw.strip():
                     time.sleep(5)
                     continue
                 verdict = strict_json(raw)
                 break
+            except JudgeRefused:
+                refused = True
+                break
             except (ValueError, urllib.error.URLError) as e:
                 time.sleep(5)
         if verdict is None:
-            log_progress({"step": "judge", "pair": pid, "ok": False})
+            rec = {"step": "judge", "pair": pid, "ok": False}
+            if refused:
+                rec.update({"refused": True, "usage": usage})
+            log_progress(rec)
             continue
         verdicts_rec = {"id": pid, "planted": p["planted"], "defect_class": p["defect_class"],
                         "defect_desc": p["defect_desc"], "judge": verdict,
-                        "judge_model": MODEL}
+                        "judge_model": MODEL, "usage": usage}
         new_verdicts.append(verdicts_rec)
         with open(VERDICTS, "a", encoding="utf-8") as f:
             f.write(json.dumps(verdicts_rec, ensure_ascii=False) + "\n")

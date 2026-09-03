@@ -27,7 +27,13 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from sideeye.adapters import load_transcript, session_files  # noqa: E402
-from sideeye.judge.judge import DEFAULT_MODEL, judge_session, load_rubric, rubric_version  # noqa: E402
+from sideeye.judge.judge import (  # noqa: E402
+    DEFAULT_MODEL,
+    judge_route_guard,
+    judge_session,
+    load_rubric,
+    rubric_version,
+)
 from sideeye.record import session_verdict_record  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parent
@@ -78,9 +84,8 @@ def main():
         fail("no judge route: set SIDEEYE_JUDGE_BASE_URL (or ANTHROPIC_BASE_URL) to the dogfood Claude route")
     if not api_key:
         fail("no judge key: set SIDEEYE_JUDGE_API_KEY (or ANTHROPIC_API_KEY)")
-    if "127.0.0.1:818" in args.base_url or "localhost:818" in args.base_url:
-        fail(f"judge route points at the local GLM gateway ({args.base_url}); the judge must use the "
-             "real Claude route. Set SIDEEYE_JUDGE_BASE_URL to the dogfood Anthropic route.")
+    if (prob := judge_route_guard(args.base_url)):
+        fail(prob)
 
     rubric_text = load_rubric(args.rubric)
     rv = rubric_version(args.rubric)
