@@ -1,0 +1,84 @@
+# Temporary nginx reverse proxy for the external Qwen3.8-Flash-Next endpoint.
+# Needed because the external OpenShift route checks the Host header, and
+# praxis's headers filter sets Host unconditionally (no per-cluster support).
+# This pod receives HTTP internally and forwards to the external HTTPS with
+# the correct Host, so praxis treats it like any other internal backend.
+# Remove when praxis gets per-cluster host_rewrite on load_balancer clusters.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen-flash-proxy-config
+  namespace: ai-gateway-dogfood
+data:
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    events { worker_connections 64; }
+    http {
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fastcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      server {
+        listen 8000;
+        location / {
+          proxy_pass https://qwen38-flash-next-d57178e0-2037-479e-9a33-217f81dd6f5e.apps.emerg.pcbk.p1.openshiftapps.com;
+          proxy_set_header Host qwen38-flash-next-d57178e0-2037-479e-9a33-217f81dd6f5e.apps.emerg.pcbk.p1.openshiftapps.com;
+          proxy_ssl_server_name on;
+          proxy_ssl_name qwen38-flash-next-d57178e0-2037-479e-9a33-217f81dd6f5e.apps.emerg.pcbk.p1.openshiftapps.com;
+          proxy_read_timeout 300s;
+          proxy_send_timeout 300s;
+          proxy_buffering off;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen-flash-proxy
+  namespace: ai-gateway-dogfood
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qwen-flash-proxy
+  template:
+    metadata:
+      labels:
+        app: qwen-flash-proxy
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/nginx:1-alpine
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      volumes:
+        - name: config
+          configMap:
+            name: qwen-flash-proxy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen-flash
+  namespace: ai-gateway-dogfood
+spec:
+  selector:
+    app: qwen-flash-proxy
+  ports:
+    - port: 8000
+      targetPort: 8000
