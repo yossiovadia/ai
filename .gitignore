@@ -60,3 +60,7 @@ sideeye/calibration/progress.jsonl
 sideeye/calibration/eval.log
 sideeye/calibration/__pycache__/
 sideeye/calibration/STOP
+# OS junk
+.DS_Store
+# local database dumps — never ship to git
+deploy/backups/
