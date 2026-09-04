@@ -144,7 +144,7 @@ def main():
                                                       user_agent=_ADVISE_UA)
     # Hard context-window guard (see escalate.py): refuse a packet that would 400
     # and still be metered. Advice packets are tiny, so this only trips on a bug.
-    if (prob := context_guard(input_tokens, args.model)):
+    if (prob := context_guard(input_tokens, args.model, max_tokens=body["max_tokens"])):
         fail(prob)
     if est_cost > args.max_cost:
         fail(f"estimated ${est_cost:.4f} exceeds --max-cost ${args.max_cost:.2f} "

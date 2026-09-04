@@ -130,6 +130,25 @@ def test_build_advice_body_omits_question_when_empty():
     assert "question I want your opinion" not in body["messages"][0]["content"]
 
 
+def test_build_advice_body_budget_covers_thinking():
+    # 2026-09-03 incident: at the 1024 global default, fable-5 spent the whole
+    # budget on a thinking block and emitted zero text (stop_reason=max_tokens,
+    # thinking-only content) — advice mode died on every call.
+    body = J.build_advice_body("r", "q", "packet")
+    assert body["max_tokens"] == J.ADVICE_MAX_TOKENS >= 4096
+
+
+def test_estimate_cost_follows_body_budget(monkeypatch):
+    # The estimate must price the budget the body actually carries, not the
+    # function default — otherwise advice estimates understate ~8x.
+    monkeypatch.setattr(J, "count_tokens", lambda *a, **k: (1000, True, ""))
+    body = {"model": "claude-fable-5", "max_tokens": J.ADVICE_MAX_TOKENS}
+    _, est, exact, _ = J.estimate_cost("http://x", "k", body, "claude-fable-5")
+    assert exact
+    # 1000 in @ $10/M + (8192//2) out @ $50/M
+    assert est == pytest.approx(round(1000 * 10.0 / 1e6 + 4096 * 50.0 / 1e6, 6))
+
+
 # --- advise(): text + cost meta ------------------------------------------
 
 def _text_response(text, usage=None):
@@ -151,6 +170,35 @@ def test_advise_returns_text_and_costed_meta(monkeypatch):
 def test_advise_raises_on_empty_text(monkeypatch):
     monkeypatch.setattr(J, "call_judge", lambda *a, **k: {"content": [], "usage": {}})
     with pytest.raises(ValueError):
+        J.advise("q", "packet", "rubric", base_url="http://x", api_key="k")
+
+
+# Empty-text failures must name themselves: a refusal, a truncation, and a
+# thinking-only completion are three different bugs with three different
+# fixes — one opaque message made them a mystery (live dogfood 2026-09-03:
+# 'judge returned no text' on a 106k-token packet, cause undiagnosable).
+
+def test_advise_error_names_refusal(monkeypatch):
+    monkeypatch.setattr(J, "call_judge", lambda *a, **k: {
+        "content": [], "stop_reason": "refusal",
+        "usage": {"input_tokens": 106000, "output_tokens": 0}})
+    with pytest.raises(ValueError, match=r"stop_reason=refusal.*content policy"):
+        J.advise("q", "packet", "rubric", base_url="http://x", api_key="k")
+
+
+def test_advise_error_names_truncation(monkeypatch):
+    monkeypatch.setattr(J, "call_judge", lambda *a, **k: {
+        "content": [{"type": "thinking", "thinking": "..."}],
+        "stop_reason": "max_tokens", "usage": {"output_tokens": 4096}})
+    with pytest.raises(ValueError, match=r"stop_reason=max_tokens.*raise max_tokens"):
+        J.advise("q", "packet", "rubric", base_url="http://x", api_key="k")
+
+
+def test_advise_error_names_thinking_only(monkeypatch):
+    monkeypatch.setattr(J, "call_judge", lambda *a, **k: {
+        "content": [{"type": "thinking", "thinking": "lots of it"}],
+        "stop_reason": "end_turn", "usage": {"output_tokens": 900}})
+    with pytest.raises(ValueError, match=r"thinking-only"):
         J.advise("q", "packet", "rubric", base_url="http://x", api_key="k")
 
 
