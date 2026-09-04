@@ -54,7 +54,8 @@ _ADVISE_UA = "sideeye-advise"       # metering "client" label for escalate-last 
 
 
 def fail(msg):
-    print(f"ERROR: {msg}", file=sys.stderr)
+    from sideeye.judge import style
+    print(style.render_error(msg), file=sys.stderr)
     sys.exit(1)
 
 
@@ -180,9 +181,9 @@ def main():
     with open(out_path, "a", encoding="utf-8") as out:
         out.write(json.dumps(record) + "\n")
 
+    from sideeye.judge import style
     print("SECOND OPINION")
-    for line in text.splitlines():
-        print(f"  {line}" if line.strip() else "")
+    print(style.render_advice(text))
     print(f"\n  judge cost: ${meta['cost_usd']:.4f}  ->  {out_path}")
 
 

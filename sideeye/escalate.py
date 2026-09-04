@@ -89,7 +89,8 @@ _EMPTY_VERDICT = {
 
 
 def fail(msg):
-    print(f"ERROR: {msg}", file=sys.stderr)
+    from sideeye.judge import style
+    print(style.render_error(msg), file=sys.stderr)
     sys.exit(1)
 
 
@@ -423,13 +424,9 @@ def main():
         out.write(json.dumps(record) + "\n")
 
     # Interactive: show the review prominently — the human asked to see it.
-    print(f"  score={record['score']}/5   correctness={record['correctness']}   "
-          f"claims_supported={record['claims_supported']}   severity={record['overall_severity']}")
-    print(f"  {record['summary']}")
-    for it in record["issues"]:
-        print(f"    [{it['severity']}] {it['description']}")
-    print(f"\n  judge cost: ${record['judge_cost_usd']:.4f}  ->  {out_path}")
-    print("  (recorded in the SEPARATE escalated stream — not pooled with random samples)")
+    # Colors render only on a real TTY; piped captures stay plain text.
+    from sideeye.judge import style
+    print(style.render_verdict(record, str(out_path)))
 
 
 if __name__ == "__main__":
