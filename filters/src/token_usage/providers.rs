@@ -49,15 +49,19 @@ struct OpenAiPromptTokensDetails {
 
 /// Parses `OpenAI`/Azure response format.
 ///
-/// Supports both Chat Completions format (`usage.prompt_tokens`) and
-/// Responses API format (`response.usage.input_tokens`). The Responses
-/// API nests usage under a `response` wrapper and uses Anthropic-style
-/// field names.
+/// Three formats are recognised:
+///
+/// 1. **Chat Completions** — `usage.prompt_tokens` / `completion_tokens`
+///    (both streaming final chunk and non-streaming JSON).
+/// 2. **Responses API SSE** — `response.usage.input_tokens` (the
+///    `response.completed` event wraps usage inside a `response` object).
+/// 3. **Responses API non-streaming** — top-level `usage.input_tokens` /
+///    `output_tokens` (same field names as #2 but no `response` wrapper).
 ///
 /// `prompt_tokens` already includes any cached tokens, so the cache read count
 /// is recorded as a breakdown of the input rather than added to it.
 pub(super) fn parse_openai(body: &[u8]) -> Option<TokenUsage> {
-    // Try Chat Completions format first (top-level usage).
+    // Try Chat Completions format first (top-level usage with prompt_tokens).
     if let Ok(response) = serde_json::from_slice::<OpenAiResponse>(body)
         && let Some(usage) = response.usage
     {
@@ -71,19 +75,33 @@ pub(super) fn parse_openai(body: &[u8]) -> Option<TokenUsage> {
         );
     }
 
-    // Try Responses API format (usage nested under response wrapper).
+    // Try Responses API SSE format (usage nested under response wrapper).
     if let Ok(wrapper) = serde_json::from_slice::<ResponsesApiEvent>(body)
         && let Some(response) = wrapper.response
         && let Some(usage) = response.usage
     {
-        return Some(TokenUsage::new(
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.total_tokens,
-        ));
+        return Some(parse_responses_api_usage(&usage));
+    }
+
+    // Try Responses API non-streaming (top-level usage with input_tokens).
+    if let Ok(direct) = serde_json::from_slice::<ResponsesApiDirect>(body)
+        && let Some(usage) = direct.usage
+    {
+        return Some(parse_responses_api_usage(&usage));
     }
 
     None
+}
+
+/// Shared extraction for both Responses API formats.
+fn parse_responses_api_usage(usage: &ResponsesApiUsage) -> TokenUsage {
+    let cache_read = usage
+        .input_tokens_details
+        .as_ref()
+        .and_then(|d| d.cached_tokens)
+        .unwrap_or(0);
+    TokenUsage::new(usage.input_tokens, usage.output_tokens, usage.total_tokens)
+        .with_cache(cache_read, NO_CACHE_WRITE)
 }
 
 /// Wrapper for OpenAI Responses API `response.completed` SSE events.
@@ -96,11 +114,18 @@ struct ResponsesApiEvent {
 /// Inner response object in Responses API events.
 #[derive(Deserialize)]
 struct ResponsesApiResponse {
-    /// Token usage (uses input_tokens/output_tokens, not prompt_tokens).
+    /// Token usage (uses `input_tokens`/`output_tokens`, not `prompt_tokens`).
     usage: Option<ResponsesApiUsage>,
 }
 
-/// Responses API usage format.
+/// Non-streaming Responses API response (top-level usage, no wrapper).
+#[derive(Deserialize)]
+struct ResponsesApiDirect {
+    /// Token usage at the top level of the response object.
+    usage: Option<ResponsesApiUsage>,
+}
+
+/// Responses API usage format (shared by SSE and non-streaming paths).
 #[derive(Deserialize)]
 struct ResponsesApiUsage {
     /// Input tokens.
@@ -109,6 +134,15 @@ struct ResponsesApiUsage {
     output_tokens: u64,
     /// Total tokens.
     total_tokens: Option<u64>,
+    /// Prompt cache breakdown (non-streaming responses include this).
+    input_tokens_details: Option<ResponsesApiInputDetails>,
+}
+
+/// Prompt cache breakdown in Responses API usage.
+#[derive(Deserialize)]
+struct ResponsesApiInputDetails {
+    /// Tokens served from the provider's prompt cache.
+    cached_tokens: Option<u64>,
 }
 
 // -----------------------------------------------------------------------------
@@ -347,6 +381,52 @@ mod tests {
         assert_eq!(usage.input_tokens(), 0);
         assert_eq!(usage.output_tokens(), 0);
         assert_eq!(usage.total_tokens(), 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // parse_openai: Responses API non-streaming (top-level input_tokens)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn openai_responses_api_non_streaming() {
+        let json = br#"{"id":"resp_abc","object":"response","usage":{"input_tokens":12,"output_tokens":2,"total_tokens":14}}"#;
+        let usage = parse_openai(json).unwrap();
+        assert_eq!(usage.input_tokens(), 12);
+        assert_eq!(usage.output_tokens(), 2);
+        assert_eq!(usage.total_tokens(), 14);
+    }
+
+    #[test]
+    fn openai_responses_api_non_streaming_without_total() {
+        let json = br#"{"id":"resp_abc","usage":{"input_tokens":100,"output_tokens":50}}"#;
+        let usage = parse_openai(json).unwrap();
+        assert_eq!(usage.input_tokens(), 100);
+        assert_eq!(usage.output_tokens(), 50);
+        assert_eq!(usage.total_tokens(), 150, "should compute total when absent");
+    }
+
+    #[test]
+    fn openai_responses_api_non_streaming_with_cache() {
+        let json = br#"{"id":"resp_abc","usage":{"input_tokens":1000,"output_tokens":50,"total_tokens":1050,"input_tokens_details":{"cached_tokens":900}}}"#;
+        let usage = parse_openai(json).unwrap();
+        assert_eq!(usage.input_tokens(), 1000);
+        assert_eq!(usage.output_tokens(), 50);
+        assert_eq!(usage.cache_read_tokens(), 900);
+        assert_eq!(usage.cache_write_tokens(), 0);
+    }
+
+    #[test]
+    fn openai_responses_api_sse_with_cache() {
+        let json = br#"{"type":"response.completed","response":{"usage":{"input_tokens":500,"output_tokens":30,"input_tokens_details":{"cached_tokens":400}}}}"#;
+        let usage = parse_openai(json).unwrap();
+        assert_eq!(usage.input_tokens(), 500);
+        assert_eq!(usage.cache_read_tokens(), 400);
+    }
+
+    #[test]
+    fn openai_responses_api_non_streaming_null_usage() {
+        let json = br#"{"id":"resp_abc","object":"response","usage":null}"#;
+        assert!(parse_openai(json).is_none());
     }
 
     // -------------------------------------------------------------------------
