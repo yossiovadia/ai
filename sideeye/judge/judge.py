@@ -28,6 +28,14 @@ ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_MAX_TOKENS = 1024
 
+# Advice gets its own output budget: thinking-capable judges burn tokens on
+# thinking blocks BEFORE emitting a word of text. Live incident 2026-09-03:
+# advice calls died as "judge returned no text" at the 1024 default —
+# stop_reason=max_tokens with a thinking-only content array (the budget was
+# all thinking). Free-form advice runs longer than a record_verdict tool
+# call anyway; 8k bounds a fable-rate worst case at ~$0.40.
+ADVICE_MAX_TOKENS = 8192
+
 # Judge-model pricing, USD per token (input, output), from the dogfood
 # model_pricing table (verified 2026-08-21). Used only to report the judge
 # call's own cost in each verdict; the authoritative bill is the metered spend.
@@ -191,7 +199,9 @@ def parse_verdict(response_json):
     for block in response_json.get("content", []) or []:
         if block.get("type") == "tool_use" and block.get("name") == "record_verdict":
             return validate_verdict(block.get("input"))
-    raise ValueError("no record_verdict tool_use block found in judge response")
+    # VerdictError (a ValueError subclass): judge() distinguishes an invalid
+    # verdict worth one corrective retry from a refusal that isn't.
+    raise VerdictError("no record_verdict tool_use block found in judge response")
 
 
 def cost_usd(model, usage) -> float:
@@ -329,9 +339,13 @@ def estimate_cost(base_url, api_key, body, model, max_tokens=DEFAULT_MAX_TOKENS,
     if not exact:
         input_tokens = _fallback_token_count(body)
     cin, cout = PRICING.get(model, PRICING[DEFAULT_MODEL])
+    # The budget rides IN the body (advice and verdict differ); estimating with
+    # the function default while sending ADVICE_MAX_TOKENS would understate
+    # advice estimates ~8x. The body is the single source of truth.
+    budget = body.get("max_tokens") or max_tokens
     # Output is unknown until the model responds; bound it by max_tokens and use
     # half of it as the working estimate (verdicts rarely fill the budget).
-    est_output = max_tokens // 2
+    est_output = budget // 2
     est_cost = round(input_tokens * cin + est_output * cout, 6)
     return input_tokens, est_cost, exact, reason
 
@@ -355,6 +369,12 @@ def judge(asked, produced, rubric_text, *, base_url, api_key,
     try:
         verdict = parse_verdict(responses[-1])
     except VerdictError as exc:
+        if responses[-1].get("stop_reason") == "refusal":
+            # The judge refused the packet (content policy) — a corrective
+            # retry would just refuse again on a second charge. Fail with
+            # the diagnosis; escalate.py records the failure honestly.
+            raise VerdictError(
+                f"{exc} ({_empty_response_detail(responses[-1])})") from exc
         # The judge returned a malformed record_verdict. Re-send the prior
         # assistant turn + a correction so it can fix the specific defect,
         # rather than re-judging from scratch. Forced tool_choice makes it
@@ -407,7 +427,7 @@ def judge(asked, produced, rubric_text, *, base_url, api_key,
 
 
 def build_advice_body(rubric_text, asked, produced, model=DEFAULT_MODEL,
-                      max_tokens=DEFAULT_MAX_TOKENS):
+                      max_tokens=ADVICE_MAX_TOKENS):
     """Build the request for ADVICE mode: a free-form second opinion, no forced
     verdict tool. The rubric (advice-flavored) is the system prompt; the light
     packet (last exchange + optional question) is the user turn."""
@@ -435,8 +455,31 @@ def _extract_text(response_json) -> str:
     return "\n".join(out).strip()
 
 
+def _empty_response_detail(response_json) -> str:
+    """Explain a 2xx judge response that carried no text. Without this,
+    structurally different failures — the judge REFUSING the packet
+    (stop_reason="refusal", e.g. content policy tripping on credential-ish
+    code) vs the response being CUT OFF mid-stream (stop_reason="max_tokens")
+    vs a thinking-only completion — all collapse into one opaque "returned
+    no text" and every debugging session starts from zero. Each hints its
+    own fix because they are genuinely different problems."""
+    stop = response_json.get("stop_reason") or "unknown"
+    blocks = [b.get("type", "?") for b in response_json.get("content", []) or []]
+    out_tokens = (response_json.get("usage", {}) or {}).get("output_tokens", "?")
+    hint = {
+        "refusal": "judge refused the packet (content policy) — try --no-code or a narrower --turns",
+        "max_tokens": "response was cut off before emitting text — raise max_tokens",
+        "tool_use": "judge answered with a tool call only — unexpected in advice mode",
+    }.get(stop)
+    if stop == "end_turn" and blocks and all(b == "thinking" for b in blocks):
+        hint = "thinking-only completion — no visible text was produced"
+    detail = (f"stop_reason={stop}, blocks={blocks or ['none']}, "
+              f"output_tokens={out_tokens}")
+    return detail + (f" — {hint}" if hint else "")
+
+
 def advise(asked, produced, rubric_text, *, base_url, api_key,
-           model=DEFAULT_MODEL, max_tokens=DEFAULT_MAX_TOKENS, timeout=60,
+           model=DEFAULT_MODEL, max_tokens=ADVICE_MAX_TOKENS, timeout=60,
            user_agent=DEFAULT_USER_AGENT):
     """ADVICE mode: one free-form second opinion on the last exchange. Returns
     (advice_text, meta). No retry loop — advice has no required-field schema to
@@ -445,7 +488,7 @@ def advise(asked, produced, rubric_text, *, base_url, api_key,
     resp = call_judge(base_url, api_key, body, timeout=timeout, user_agent=user_agent)
     text = _extract_text(resp)
     if not text:
-        raise ValueError("judge returned no text for advice")
+        raise ValueError(f"judge returned no text for advice ({_empty_response_detail(resp)})")
     usage = resp.get("usage", {}) or {}
     meta = {
         "judge_model": model,

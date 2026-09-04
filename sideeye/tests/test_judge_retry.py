@@ -8,9 +8,12 @@ from __future__ import annotations
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from sideeye.judge import judge as J  # noqa: E402
+from sideeye.judge.schema import VerdictError  # noqa: E402
 
 
 def _malformed_first():
@@ -67,3 +70,23 @@ def test_retry_success_returns_valid_verdict(monkeypatch):
     monkeypatch.setattr(J, "call_judge", fake_call)
     verdict, meta = J.judge("a", "p", "R", base_url="https://x", api_key="k")
     assert verdict["summary"] == "ok" and meta["retries"] == 1
+
+
+def test_refusal_fails_fast_with_diagnosis_and_no_retry(monkeypatch):
+    """A content-policy refusal (stop_reason=refusal, no content) must NOT
+    trigger the corrective retry — the retry would refuse again on a second
+    charge. The VerdictError must carry the diagnosis so escalate.py's error
+    record says WHY (2026-09-03: a 106k-token advice packet died as opaque
+    'judge returned no text', indistinguishable from a transport bug)."""
+    calls = {"n": 0}
+
+    def fake_call(base, key, body, timeout=60, **kwargs):
+        calls["n"] += 1
+        return {"content": [], "stop_reason": "refusal",
+                "usage": {"input_tokens": 106000, "output_tokens": 0}}
+
+    monkeypatch.setattr(J, "call_judge", fake_call)
+    import pytest
+    with pytest.raises(VerdictError, match=r"stop_reason=refusal.*content policy"):
+        J.judge("a", "p", "R", base_url="https://x", api_key="k")
+    assert calls["n"] == 1  # failed fast — no second paid call
