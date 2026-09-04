@@ -220,8 +220,96 @@ def _is_escalation_turn(turn) -> bool:
     if role == "assistant":
         return head.startswith("[ran: sideeye ") or "sideeye · advice mode" in head[:80]
     if role == "tool":
-        return head.startswith("[tool_result: sideeye")
+        # The review/advise stdout does NOT start with "sideeye" (it opens with
+        # "Session : ..." / the advice packet header), so a prefix match misses
+        # it — match on output-structure markers near the START instead. Small
+        # false-positive risk (a tool turn that happens to cat sideeye source
+        # near these literals) only ever costs a dev session on Side-Eye itself
+        # one piece of tool evidence; the alternative is the judge grading the
+        # previous judge's output as if it were the session's work.
+        if head.startswith("[tool_result: sideeye"):
+            return True
+        probe = head[:1200]
+        return "Escalating to claude-" in probe or "judge cost:" in probe
     return False
+
+
+# Appended to review-mode transcripts whose escalation machinery was trimmed, so
+# the judge reads the abrupt ending as the DESIGN (the snapshot stops at the
+# request) rather than an unfinished session it must penalize. Without this note
+# the judge completes the story itself — it sees "Firing up the judge" with no
+# verdict and files a critical against the review for not having happened yet
+# (it grades its own birth).
+ESCALATION_BOUNDARY_NOTE = (
+    "This transcript snapshot ends at the moment the human requested this review. "
+    "Side-Eye's own escalation exchange — the /escalate-* request and the review "
+    "in progress — has been excluded by design: the review cannot contain its "
+    "own verdict. Do NOT treat the missing escalation result, or the transcript "
+    "ending mid-sentence, as an unresolved ask or a defect; grade only the work "
+    "that came before the request."
+)
+
+
+def strip_escalation(t):
+    """Trim Side-Eye's own escalation machinery from a FULL-session (review-mode)
+    transcript. The structural sibling of recent_exchanges' filter, for the
+    escalate-all lane: review mode renders the whole transcript, so without this
+    the packet (a) contains the injected /escalate-* skill body as a SACRED user
+    turn — the judge scores it as a second ask the session "failed" — and (b)
+    ends mid-call, because the tool_result for the review can only exist after
+    the judge answers. Every escalate-all verdict then carries that false
+    critical by construction.
+
+    Rule: find the LAST injected escalation skill body (a user turn, per
+    _is_escalation_turn) and cut everything from it onward — that is the
+    invocation currently running, and no text-matcher can catch its dangling
+    narration ("Firing up the judge") anyway. Completed EARLIER escalation
+    exchanges are filtered anywhere in the session (the judge must not grade the
+    previous judge's output). Earlier sessions' real work — including work done
+    after a previous escalation — is kept untouched.
+
+    The trimmed transcript gets a system-role boundary note appended telling the
+    judge where it stopped and why. If trimming leaves no real user ask (session
+    that is nothing but escalation machinery), fall back to the ORIGINAL turns —
+    never ship an empty packet (it invites fabrication) — but still append the
+    note so the judge excludes the machinery it can see.
+
+    Returns (transcript, dropped): `dropped` counts removed turns (0 = untouched
+    plain session, returned unchanged, no note). generation_usage is preserved
+    as-is: it describes what the session actually spent, trimming narrative does
+    not change the bill.
+    """
+    turns = t["turns"]
+    boundary = max((i for i, tn in enumerate(turns)
+                    if tn["role"] == "user" and _is_escalation_turn(tn)), default=None)
+    # Truncate ONLY when that last invocation is still in flight — i.e. nothing
+    # after it proves it finished. The in-flight signature: no escalation result
+    # (tool) turn after the boundary AND no later human turn (a human spoke only
+    # after the review answered). If either exists, the session ran on past the
+    # escalation and any real work after it belongs in the review — filter the
+    # machinery turns, do not truncate. This keeps the rule correct for a
+    # completed session reviewed after the fact (or a re-review of a session that
+    # already escalated once), not just the live mid-call snapshot.
+    in_flight = boundary is not None and not any(
+        tn["role"] == "user" or (tn["role"] == "tool" and _is_escalation_turn(tn))
+        for tn in turns[boundary + 1:])
+    kept = turns[:boundary] if in_flight else list(turns)
+    kept = [tn for tn in kept if not _is_escalation_turn(tn)]
+    if len(kept) == len(turns):
+        return t, 0                                   # plain session — untouched, no note
+
+    note = {"role": "system", "text": ESCALATION_BOUNDARY_NOTE}
+    has_real_ask = any(tn["role"] == "user" and tn["text"].strip() for tn in kept)
+    # Machinery-only session (the human's one and only turn was /escalate-*): never
+    # ship an empty packet — it invites the judge to fabricate. Keep the original
+    # turns and let the note tell the judge to exclude the machinery it can see.
+    final_turns = kept if has_real_ask else list(turns)
+    trimmed = make_transcript(session_id=t["session_id"], source=t["source"],
+                              turns=final_turns + [note], model=t.get("model"),
+                              created_at=t.get("created_at"),
+                              generation_usage=t.get("generation_usage"),
+                              touched_files=t.get("touched_files"))
+    return trimmed, len(turns) - len(final_turns)
 
 
 def recent_exchanges(t, n: int = 1, include_tools: bool = False) -> str:
