@@ -47,7 +47,7 @@ from sideeye.judge.judge import (  # noqa: E402
     resolve_model,
     rubric_version,
 )
-from sideeye.judge.transcript import first_user_ask, render, render_budgeted  # noqa: E402
+from sideeye.judge.transcript import first_user_ask, render, render_budgeted, strip_escalation  # noqa: E402
 from sideeye.record import (  # noqa: E402
     ADAPTER_VERSION_BLIND,
     ADAPTER_VERSION_BLIND_TIERED,
@@ -275,6 +275,19 @@ def main():
     transcript = load_transcript(rollout)
     if transcript is None:
         fail(f"no usable turns in {rollout}")
+
+    # Exclude Side-Eye's own escalation machinery BEFORE anything else reads the
+    # transcript. Without this the packet is self-referential by construction:
+    # the injected /escalate-* skill body rides in as a sacred user ask the
+    # session "failed", and the snapshot ends mid-call (the review's own result
+    # can't exist until the judge answers), so every escalate-all verdict carries
+    # a false critical about the review not having happened yet.
+    raw_transcript = transcript
+    transcript, esc_dropped = strip_escalation(transcript)
+    if transcript is not raw_transcript:
+        print(f"Scope   : escalation machinery excluded"
+              + (f" ({esc_dropped} turn(s))" if esc_dropped else " (annotated in-packet)")
+              + " — this review grades the work, not the review request itself")
 
     rubric_text = load_rubric(args.rubric)
     rv = rubric_version(args.rubric)
