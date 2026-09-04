@@ -9,7 +9,7 @@ use praxis_filter::FilterRegistry;
 use crate::{
     A2aFilter, AiGuardrailsFilter, ApiKeyAuthFilter, ExternalMeteringFilter, IdentityHeaderGuardFilter,
     IntelligentRouteFilter, JwtAuthFilter, McpFilter, ModelAccessFilter, ModelCatalogFilter, ModelToHeaderFilter,
-    PromptEnrichFilter, TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
+    PromptEnrichFilter, StreamUsageInjectFilter, TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
 };
 
 /// Register all in-tree AI HTTP filters into `registry`.
@@ -105,6 +105,10 @@ fn register_general_ai_filters(registry: &mut FilterRegistry) {
     praxis_filter::register_filters!(
         @register registry,
         http "prompt_enrich" => PromptEnrichFilter::from_config
+    );
+    praxis_filter::register_filters!(
+        @register registry,
+        http "stream_usage_inject" => StreamUsageInjectFilter::from_config
     );
     praxis_filter::register_filters!(
         @register registry,
