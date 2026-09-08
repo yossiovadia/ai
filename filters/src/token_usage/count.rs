@@ -50,7 +50,12 @@ use crate::agentic::a2a::sse;
 const DEFAULT_MAX_BODY_BYTES: usize = 1_048_576; // 1 MiB
 
 /// Default maximum scratch bytes for SSE scanner state.
-const DEFAULT_MAX_SCRATCH_BYTES: usize = 65_536; // 64 KiB
+///
+/// Must accommodate the largest single SSE event. Responses API events
+/// (`response.created`, `response.completed`) embed the full response
+/// object — tools, schemas, and output text — which routinely exceeds
+/// 64 KiB in agentic coding sessions.
+const DEFAULT_MAX_SCRATCH_BYTES: usize = 1_048_576; // 1 MiB
 
 /// Metadata key prefix for all `token_count` working state.
 const META_PREFIX: &str = "token_count.";
