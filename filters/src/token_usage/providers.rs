@@ -7,10 +7,7 @@ use serde::Deserialize;
 
 use super::TokenUsage;
 
-/// Cache write counts are not reported by every provider.
-///
-/// `OpenAI` and Google expose how much of the prompt was *read* from their cache
-/// but not how much was written to it, so those parsers report no cache writes.
+/// Sentinel for providers that do not report cache write counts (Google).
 const NO_CACHE_WRITE: u64 = 0;
 
 // -----------------------------------------------------------------------------
@@ -45,6 +42,9 @@ struct OpenAiUsage {
 struct OpenAiPromptTokensDetails {
     /// Tokens read from cache, already counted in `prompt_tokens`.
     cached_tokens: Option<u64>,
+
+    /// Tokens written to cache during this request.
+    cache_write_tokens: Option<u64>,
 }
 
 /// Parses `OpenAI`/Azure response format.
@@ -65,13 +65,12 @@ pub(super) fn parse_openai(body: &[u8]) -> Option<TokenUsage> {
     if let Ok(response) = serde_json::from_slice::<OpenAiResponse>(body)
         && let Some(usage) = response.usage
     {
-        let cache_read = usage
-            .prompt_tokens_details
-            .and_then(|details| details.cached_tokens)
-            .unwrap_or(0);
+        let details = &usage.prompt_tokens_details;
+        let cache_read = details.as_ref().and_then(|d| d.cached_tokens).unwrap_or(0);
+        let cache_write = details.as_ref().and_then(|d| d.cache_write_tokens).unwrap_or(0);
         return Some(
             TokenUsage::new(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens)
-                .with_cache(cache_read, NO_CACHE_WRITE),
+                .with_cache(cache_read, cache_write),
         );
     }
 
@@ -95,13 +94,11 @@ pub(super) fn parse_openai(body: &[u8]) -> Option<TokenUsage> {
 
 /// Shared extraction for both Responses API formats.
 fn parse_responses_api_usage(usage: &ResponsesApiUsage) -> TokenUsage {
-    let cache_read = usage
-        .input_tokens_details
-        .as_ref()
-        .and_then(|d| d.cached_tokens)
-        .unwrap_or(0);
+    let details = &usage.input_tokens_details;
+    let cache_read = details.as_ref().and_then(|d| d.cached_tokens).unwrap_or(0);
+    let cache_write = details.as_ref().and_then(|d| d.cache_write_tokens).unwrap_or(0);
     TokenUsage::new(usage.input_tokens, usage.output_tokens, usage.total_tokens)
-        .with_cache(cache_read, NO_CACHE_WRITE)
+        .with_cache(cache_read, cache_write)
 }
 
 /// Wrapper for OpenAI Responses API `response.completed` SSE events.
@@ -143,6 +140,9 @@ struct ResponsesApiUsage {
 struct ResponsesApiInputDetails {
     /// Tokens served from the provider's prompt cache.
     cached_tokens: Option<u64>,
+
+    /// Tokens written to cache during this request.
+    cache_write_tokens: Option<u64>,
 }
 
 // -----------------------------------------------------------------------------
@@ -637,7 +637,52 @@ mod tests {
         assert_eq!(usage.input_tokens(), 1000, "cached tokens are already in prompt_tokens");
         assert_eq!(usage.total_tokens(), 1050);
         assert_eq!(usage.cache_read_tokens(), 900);
-        assert_eq!(usage.cache_write_tokens(), 0, "OpenAI does not report cache writes");
+        assert_eq!(usage.cache_write_tokens(), 0, "no cache writes in this response");
+    }
+
+    #[test]
+    fn openai_cache_write_tokens_extracted() {
+        let json = br#"{"usage": {
+            "prompt_tokens": 1000,
+            "completion_tokens": 50,
+            "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 800}
+        }}"#;
+        let usage = parse_openai(json).unwrap();
+
+        assert_eq!(usage.input_tokens(), 1000);
+        assert_eq!(usage.cache_read_tokens(), 0);
+        assert_eq!(usage.cache_write_tokens(), 800);
+    }
+
+    #[test]
+    fn openai_cache_read_and_write_together() {
+        let json = br#"{"usage": {
+            "prompt_tokens": 2000,
+            "completion_tokens": 100,
+            "prompt_tokens_details": {"cached_tokens": 1500, "cache_write_tokens": 300}
+        }}"#;
+        let usage = parse_openai(json).unwrap();
+
+        assert_eq!(usage.cache_read_tokens(), 1500);
+        assert_eq!(usage.cache_write_tokens(), 300);
+    }
+
+    #[test]
+    fn openai_responses_api_cache_write_extracted() {
+        let json = br#"{"id":"resp_abc","usage":{"input_tokens":1000,"output_tokens":50,"total_tokens":1050,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":900}}}"#;
+        let usage = parse_openai(json).unwrap();
+
+        assert_eq!(usage.cache_write_tokens(), 900);
+        assert_eq!(usage.cache_read_tokens(), 0);
+    }
+
+    #[test]
+    fn openai_responses_api_sse_cache_write_extracted() {
+        let json = br#"{"type":"response.completed","response":{"usage":{"input_tokens":500,"output_tokens":30,"input_tokens_details":{"cached_tokens":100,"cache_write_tokens":350}}}}"#;
+        let usage = parse_openai(json).unwrap();
+
+        assert_eq!(usage.cache_read_tokens(), 100);
+        assert_eq!(usage.cache_write_tokens(), 350);
     }
 
     #[test]
