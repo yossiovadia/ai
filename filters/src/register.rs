@@ -7,9 +7,10 @@ use praxis_core::subrequest::SubRequestClient;
 use praxis_filter::FilterRegistry;
 
 use crate::{
-    A2aFilter, AiGuardrailsFilter, ApiKeyAuthFilter, ExternalMeteringFilter, IdentityHeaderGuardFilter,
-    IntelligentRouteFilter, JwtAuthFilter, McpFilter, ModelAccessFilter, ModelCatalogFilter, ModelToHeaderFilter,
-    PromptEnrichFilter, StreamUsageInjectFilter, TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
+    A2aFilter, AiGuardrailsFilter, ApiKeyAuthFilter, ContentNormalizeFilter, ExternalMeteringFilter,
+    IdentityHeaderGuardFilter, IntelligentRouteFilter, JwtAuthFilter, McpFilter, ModelAccessFilter,
+    ModelCatalogFilter, ModelToHeaderFilter, PromptEnrichFilter, StreamUsageInjectFilter,
+    TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
 };
 
 /// Register all in-tree AI HTTP filters into `registry`.
@@ -73,6 +74,10 @@ fn register_general_ai_filters(registry: &mut FilterRegistry) {
     praxis_filter::register_filters!(
         @register registry,
         http "ai_guardrails" => AiGuardrailsFilter::from_config
+    );
+    praxis_filter::register_filters!(
+        @register registry,
+        http "content_normalize" => ContentNormalizeFilter::from_config
     );
     praxis_filter::register_filters!(
         @register registry,
