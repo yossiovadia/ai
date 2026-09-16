@@ -195,6 +195,20 @@ print(json.dumps(bc))' | oc -n "$NAMESPACE" apply -f -
     oc -n "$NAMESPACE" apply -f "$f"
     rm -f "$f"
 
+    log "Inherit dashboard admin lists from LIVE prod metering"
+    # ADMIN_USERS/SUPERADMIN_USERS were hot-patched onto the live prod
+    # deployment and are absent from the committed manifest — a twin rendered
+    # from YAML alone starts with no admins (fail-closed, but useless for a
+    # daily-drive dashboard). Copy the live values, same drift class as the
+    # praxis-config cm hand-patches (status doc finding 3).
+    for E in ADMIN_USERS SUPERADMIN_USERS ALLOW_UNAUTHENTICATED_ADMIN; do
+        V="$(oc -n "$NAMESPACE" get deploy metering-service -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name==\"$E\")].value}")"
+        CUR="$(oc -n "$NAMESPACE" get deploy "$SHADOW_METERING" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name==\"$E\")].value}")"
+        if [[ -n "$V" && "$V" != "$CUR" ]]; then
+            oc -n "$NAMESPACE" set env "deploy/$SHADOW_METERING" "$E=$V" >/dev/null
+        fi
+    done
+
     log "Shadow routes"
     oc -n "$NAMESPACE" get routes -o custom-columns=NAME:.metadata.name,HOST:.spec.host \
         | grep -E 'NAME|shadow' || true
