@@ -27,7 +27,7 @@ PROMPT="Reply with exactly one word: onboarded"
 OUT="${CLAUDE_JOB_DIR:-/tmp}/tmp/welcome-prove"
 rm -rf "$OUT"; mkdir -p "$OUT"; chmod 700 "$OUT"
 
-CLIENTS="${CLIENTS:-claude codex opencode}"   # subset filter for reruns
+CLIENTS="${CLIENTS:-claude codex opencode hermes}"   # subset filter for reruns
 want() { [[ " $CLIENTS " == *" $1 "* ]]; }
 
 log() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
@@ -154,6 +154,61 @@ PY
     after="$(db_rows)"; echo "  usage_events rows: $before -> $after"
 else
     skip "opencode (excluded via CLIENTS or not installed — npm i -g opencode-ai)"
+fi
+
+# ── 4. Hermes CLI (welcome §06) — WORKING configs, not the page's ─
+# The welcome page's hermes section does not work as written (proved
+# 2026-09-16 against shadow, rows aigateway_shadow 23–40):
+#  * anthropic provider ignores yaml model.base_url (registry reads
+#    ANTHROPIC_BASE_URL env only) → hermes silently used fallback providers
+#    and answered with ZERO gateway calls (unmetered!). Fix: BASE_URL lines
+#    in ~/.hermes/.env (verified: hermes loads .env into its credential
+#    pool — row 33 metered with .env-only).
+#  * custom provider ignores env keys entirely, sends literal "no-key"
+#    placeholder → needs model.api_key in config.yaml.
+#  * default gpt-5.3-codex is responses-only on this gateway; hermes custom
+#    speaks chat/completions → 404. gpt-5.4 works; gpt-5.6-luna 400s on
+#    hermes' tools+reasoning_effort combo.
+# This leg encodes the FIXED recipe. Auxiliary/probe calls land as extra
+# model='unknown' 0-token rows — metering records them, dashboards filter.
+if want hermes; then
+    HERMES_BIN="$(command -v hermes || true)"
+    [[ -z "$HERMES_BIN" && -x "$HOME/.local/bin/hermes" ]] && HERMES_BIN="$HOME/.local/bin/hermes"
+    if [[ -n "$HERMES_BIN" ]]; then
+        export HERMES_HOME="$OUT/hermes"; mkdir -p "$HERMES_HOME"
+        umask 077
+        cat > "$HERMES_HOME/.env" <<EOF
+OPENAI_API_KEY=$KEY
+OPENAI_BASE_URL=$OPENAI
+ANTHROPIC_API_KEY=$KEY
+ANTHROPIC_BASE_URL=$UNIFIED/v1
+EOF
+        for dialect in qwen gpt; do
+            log "Hermes ($dialect dialect)"
+            if [[ "$dialect" == qwen ]]; then
+                cat > "$HERMES_HOME/config.yaml" <<EOF
+model:
+  provider: "anthropic"
+  default:  "Inferact/Qwen3.8-Flash-Next-NVFP4"
+EOF
+            else
+                cat > "$HERMES_HOME/config.yaml" <<EOF
+model:
+  provider: "custom"
+  default:  "gpt-5.4"
+  base_url: "$OPENAI"
+  api_key:  "$KEY"
+EOF
+            fi
+            before="$(db_rows)"
+            timeout 180 "$HERMES_BIN" -z "$PROMPT" > "$OUT/hermes-$dialect.log" 2>&1 || true
+            grep -qi onboarded "$OUT/hermes-$dialect.log" && pass "hermes/$dialect" \
+                || fail "hermes/$dialect — see $OUT/hermes-$dialect.log: $(tail -c 150 "$OUT/hermes-$dialect.log" | tr '\n' ' ')"
+            after="$(db_rows)"; echo "  usage_events rows: $before -> $after"
+        done
+    else
+        skip "hermes not installed (pip install --user hermes-agent)"
+    fi
 fi
 
 # ── summary ───────────────────────────────────────────────────
