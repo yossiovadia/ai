@@ -20,7 +20,7 @@ Reads the user's group from `filter_metadata` (set by upstream auth filters like
 | `overrides[].mode` | `allowlist` \| `denylist` | yes | Access mode for these groups. |
 | `overrides[].models` | string[] | yes | Model patterns for these groups. |
 | `max_body_bytes` | integer | no | Maximum request body bytes to buffer for model extraction. |
-| `group_metadata_key` | string | no | Metadata key for user's group (set by api_key_auth or jwt_auth). |
+| `group_metadata_key` | string | no | Metadata key for user's group (set by `api_key_auth` or `jwt_auth`). |
 
 ## Example
 

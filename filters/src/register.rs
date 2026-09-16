@@ -16,11 +16,9 @@ use crate::HttpCalloutFilter;
 use crate::TokenRateLimitFilter;
 use crate::{
     A2aFilter, AiGuardrailsFilter, ApiKeyAuthFilter, ContentNormalizeFilter, CredentialInjectFilter,
-    ExternalMeteringFilter,
-    IdentityHeaderGuardFilter, IntelligentRouteFilter, LlmisvcModelProviderResolverFilter, McpFilter, ModelAccessFilter,
-    ModelCatalogFilter, ModelToHeaderFilter, PromptEnrichFilter, ProviderRouteFilter, Sigv4SignFilter,
-    StreamUsageInjectFilter, TimeToFirstTokenFilter,
-    TokenCountFilter, TokenUsageHeadersFilter,
+    ExternalMeteringFilter, IdentityHeaderGuardFilter, IntelligentRouteFilter, LlmisvcModelProviderResolverFilter,
+    McpFilter, ModelAccessFilter, ModelCatalogFilter, ModelToHeaderFilter, PromptEnrichFilter, ProviderRouteFilter,
+    Sigv4SignFilter, StreamUsageInjectFilter, TimeToFirstTokenFilter, TokenCountFilter, TokenUsageHeadersFilter,
 };
 
 /// Register all in-tree AI HTTP filters into `registry`.
@@ -113,6 +111,7 @@ fn register_gcp_filters(registry: &mut FilterRegistry) {
 }
 
 /// Register general-purpose AI filters.
+#[expect(clippy::too_many_lines, reason = "long flat registration list")]
 fn register_general_ai_filters(registry: &mut FilterRegistry) {
     register_state_owner(registry);
     register_state_owner_headers(registry);

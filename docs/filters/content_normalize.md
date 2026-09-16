@@ -9,7 +9,7 @@ Normalizes Anthropic content block types for vLLM/Qwen compatibility.
 
 | Field | Type | Required | Description |
 |-------|------|---------|-------------|
-| `max_body_bytes` | integer | no |  |
+| `max_body_bytes` | integer | no | Maximum request body size accepted by the filter. |
 
 ## Example
 
