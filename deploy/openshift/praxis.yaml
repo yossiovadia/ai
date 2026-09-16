@@ -237,11 +237,8 @@ data:
             format: anthropic
             path: /v1/models
             models:
-              - id: Qwen3.8-27B-FP8
-                display_name: "Qwen3.8-27B-FP8 (self-hosted, $0)"
-                owned_by: vllm
               - id: Inferact/Qwen3.8-Flash-Next-NVFP4
-                display_name: "Qwen3.8-Flash-Next FP4 (self-hosted, $0)"
+                display_name: "Qwen 3.8 Flash Next (hosted, $0.15/$0.47 per MTok)"
                 owned_by: vllm
               - id: claude-opus-4-8
                 display_name: "Claude Opus 4.8"
@@ -273,12 +270,8 @@ data:
 
           - filter: router
             routes:
-              # Self-hosted models get explicit rules; everything else (all the
-              # claude-* names) falls through to the anthropic default.
-              - path_prefix: "/"
-                headers:
-                  x-model: "Qwen3.8-27B-FP8"
-                cluster: vllm
+              # Self-hosted Qwen, direct to vLLM; everything else (claude-*)
+              # falls through to the anthropic default.
               - path_prefix: "/"
                 headers:
                   x-model: "Inferact/Qwen3.8-Flash-Next-NVFP4"
@@ -301,14 +294,18 @@ data:
             identity_header_prefix: "x-tenant-"
             default_model: "unknown"
 
-          # Both backends return Anthropic-format usage, so one provider works.
+          # Anthropic (Messages SSE) and Qwen-via-Codex (Responses SSE) report
+          # usage in different envelopes; provider: auto picks the dialect per
+          # request path so both are metered instead of only Anthropic's.
           - filter: token_count
-            provider: anthropic
+            provider: auto
+            # Responses-API SSE events embed the full response object and
+            # routinely exceed the 64 KiB default; match the old binary's
+            # hardcoded 1 MiB scratch so Qwen-via-Codex usage still meters.
+            max_scratch_bytes: 1048576
 
           - filter: token_usage_headers
 
-          # Only the anthropic cluster needs an upstream credential; a vllm-routed
-          # request matches no entry here, so nothing is injected for Qwen.
           - filter: credential_injection
             clusters:
               - name: anthropic
@@ -316,16 +313,22 @@ data:
                 env_var: ANTHROPIC_API_KEY
                 strip_client_credential: true
 
-          # Anthropic validates Host against its SNI, so it must be set. vLLM
-          # ignores the Host header, so setting it unconditionally is harmless
-          # for Qwen-routed requests. (If a future backend on this listener
-          # DOES validate Host, this must become per-cluster.)
           - filter: headers
             request_set:
               - name: "Host"
-                value: "api.anthropic.com"
+                value: "qwen38-flash-next-d57178e0-2037-479e-9a33-217f81dd6f5e.apps.emerg.pcbk.p1.openshiftapps.com"
               - name: "anthropic-version"
                 value: "2023-06-01"
+
+          # Override Host for Anthropic: extra_request_headers (from
+          # credential_injection) are applied after headers_to_set, so
+          # this wins for anthropic-routed requests while qwen-flash
+          # keeps the direct vLLM host set above.
+          - filter: credential_injection
+            clusters:
+              - name: anthropic
+                header: Host
+                value: "api.anthropic.com"
 
           - filter: load_balancer
             clusters:
@@ -335,14 +338,12 @@ data:
                 idle_timeout_ms: 45000
                 endpoints:
                   - "api.anthropic.com:443"
-              - name: vllm
-                idle_timeout_ms: 45000
-                endpoints:
-                  - "10.240.0.10:8000"
               - name: qwen-flash
+                tls:
+                  sni: "qwen38-flash-next-d57178e0-2037-479e-9a33-217f81dd6f5e.apps.emerg.pcbk.p1.openshiftapps.com"
                 idle_timeout_ms: 45000
                 endpoints:
-                  - "qwen-flash:8000"
+                  - "qwen38-flash-next-d57178e0-2037-479e-9a33-217f81dd6f5e.apps.emerg.pcbk.p1.openshiftapps.com:443"
 ---
 # NOTE: provider-credentials Secret is created by deploy.sh from
 # env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY). Do NOT include it
