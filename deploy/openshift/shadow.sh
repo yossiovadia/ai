@@ -179,6 +179,7 @@ import json, sys
 bc = json.load(sys.stdin)
 for k in ("creationTimestamp","resourceVersion","uid"):
     bc["metadata"].pop(k, None)
+bc.pop("status", None)      # prod lastVersion would number shadow builds from 33+
 bc["metadata"]["name"] = "'"${SHADOW_BC}"'"
 sp = bc["spec"]
 sp["output"].get("to", {})["name"] = "'"${SHADOW_IS}"':latest"  # ImageStreamTag needs name:tag
