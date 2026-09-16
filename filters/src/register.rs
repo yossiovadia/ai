@@ -19,7 +19,7 @@ use crate::{
     ExternalMeteringFilter,
     IdentityHeaderGuardFilter, IntelligentRouteFilter, LlmisvcModelProviderResolverFilter, McpFilter, ModelAccessFilter,
     ModelCatalogFilter, ModelToHeaderFilter, PromptEnrichFilter, ProviderRouteFilter, Sigv4SignFilter,
-    TimeToFirstTokenFilter,
+    StreamUsageInjectFilter, TimeToFirstTokenFilter,
     TokenCountFilter, TokenUsageHeadersFilter,
 };
 
@@ -152,6 +152,10 @@ fn register_general_ai_filters(registry: &mut FilterRegistry) {
     praxis_filter::register_filters!(
         @register registry,
         http "prompt_enrich" => PromptEnrichFilter::from_config
+    );
+    praxis_filter::register_filters!(
+        @register registry,
+        http "stream_usage_inject" => StreamUsageInjectFilter::from_config
     );
     praxis_filter::register_filters!(
         @register registry,
