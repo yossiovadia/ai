@@ -144,40 +144,26 @@ render_file() {
 up() {
     require_oc
     log "Shadow database $SHADOW_DB on $CNPG_CLUSTER"
-    # CREATE DATABASE is not IF-EXISTS-able; job treats "already exists" as OK.
-    # Password flows secret→env only; never printed.
-    # Jobs are immutable — drop any previous run so re-runs are idempotent.
-    oc -n "$NAMESPACE" delete job shadow-db-create --ignore-not-found --wait=true
+    # Declarative: the CNPG operator runs CREATE DATABASE as its own internal
+    # superuser. The app role deliberately lacks CREATEDB and this cluster has
+    # no superuser secret — a Database CR is the right layer: no remote shell,
+    # no password, idempotent apply. Teardown deletes the CR (reclaim: delete
+    # default) so the db goes with the rest of the shadow.
     oc -n "$NAMESPACE" apply -f - <<EOF
-apiVersion: batch/v1
-kind: Job
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
 metadata:
-  name: shadow-db-create
+  name: shadow-db
 spec:
-  backoffLimit: 2
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: createdb
-          image: postgres:16-alpine
-          env:
-            - name: PW
-              valueFrom:
-                secretKeyRef:
-                  name: $CNPG_DB_SECRET
-                  key: password
-          command:
-            - sh
-            - -c
-            - |
-              OUT="$(PGPASSWORD="$PW" psql -h ${CNPG_CLUSTER}-rw -U aigateway -d aigateway \
-                    -c 'CREATE DATABASE $SHADOW_DB' 2>&1)" && exit 0
-              echo "$OUT" | grep -q 'already exists' && exit 0
-              echo "$OUT" >&2; exit 1
+  cluster:
+    name: $CNPG_CLUSTER
+  name: $SHADOW_DB
+  owner: aigateway
+  ensure: present
 EOF
-    oc -n "$NAMESPACE" wait --for=condition=complete job/shadow-db-create --timeout=180s \
-        || die "shadow db create job failed (see: oc -n $NAMESPACE logs job/shadow-db-create)"
+    # CNPG Database reports success as status.applied=true, not a Ready condition.
+    oc -n "$NAMESPACE" wait --for=jsonpath='{.status.applied}'=true database/shadow-db --timeout=180s \
+        || die "shadow db reconcile failed (oc -n $NAMESPACE describe database shadow-db)"
 
     log "Shadow metering DSN secret (piped, never printed)"
     PW="$(oc -n "$NAMESPACE" get secret "$CNPG_DB_SECRET" -o jsonpath='{.data.password}' | base64 -d)"
@@ -195,7 +181,7 @@ for k in ("creationTimestamp","resourceVersion","uid"):
     bc["metadata"].pop(k, None)
 bc["metadata"]["name"] = "'"${SHADOW_BC}"'"
 sp = bc["spec"]
-sp["output"].get("to", {})["name"] = "'"${SHADOW_IS}"'"
+sp["output"].get("to", {})["name"] = "'"${SHADOW_IS}"':latest"  # ImageStreamTag needs name:tag
 sp.pop("triggers", None)   # ImageChange triggers must not watch the prod imagestream
 print(json.dumps(bc))' | oc -n "$NAMESPACE" apply -f -
     fi
@@ -245,7 +231,7 @@ teardown() {
     oc -n "$NAMESPACE" delete bc "$SHADOW_BC" --ignore-not-found
     oc -n "$NAMESPACE" delete is "$SHADOW_IS" --ignore-not-found
     oc -n "$NAMESPACE" delete secret "$SHADOW_DB_SECRET" --ignore-not-found
-    echo "shadow resources gone. db '$SHADOW_DB' KEPT (delete manually if wanted)."
+    echo "shadow resources gone. db '$SHADOW_DB' KEPT (drop it with: oc -n $NAMESPACE delete database shadow-db)."
 }
 
 case "${1:-}" in
