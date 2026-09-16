@@ -9,15 +9,17 @@ Extracts token usage from AI inference responses and writes unified counts to [`
 
 Supports both streaming (SSE) and non-streaming (JSON) responses across five providers (OpenAI, Anthropic, Google, Bedrock Converse, Azure), plus a header-only extraction path for Bedrock `InvokeModel`.
 
+`provider: auto` selects the dialect per request from the endpoint path, for routes that serve several API formats behind one base URL. Paths with no usage format (health checks, `/v1/models`, `count_tokens`) are skipped.
+
 ## Configuration
 
 | Field | Type | Required | Description |
 |-------|------|---------|-------------|
-| `provider` | `openai` \| `anthropic` \| `google` \| `bedrock` \| `bedrock_invoke_model` \| `azure` | yes | AI provider whose response format to parse. |
+| `provider` | `openai` \| `anthropic` \| `google` \| `bedrock` \| `bedrock_invoke_model` \| `azure` \| `auto` | yes | AI provider whose response format to parse. |
 
 ## Example
 
 ```yaml
 filter: token_count
-provider: openai   # openai | anthropic | google | bedrock | bedrock_invoke_model | azure
+provider: openai   # openai | anthropic | google | bedrock | bedrock_invoke_model | azure | auto
 ```

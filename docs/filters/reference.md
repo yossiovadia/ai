@@ -51,6 +51,18 @@ see the [Praxis core filter reference][core-ref].
 | [`a2a`](a2a.md) | Extracts A2A protocol metadata from JSON-RPC request bodies and promotes method, family, task ID, streaming detection, and version to request headers, filter results, and durable metadata for routing. |
 | [`mcp`](mcp.md) | Extracts MCP protocol metadata from JSON-RPC request bodies and promotes method, tool/resource/prompt name, JSON-RPC kind, protocol version, and session presence to request headers/filter results; stores session ID in durable metadata. |
 
+### Api Key Auth
+
+| Filter | Description |
+|--------|-------------|
+| [`api_key_auth`](api_key_auth.md) | Validates API keys against an external service and injects verified identity into `filter_metadata`. |
+
+### Content Normalize
+
+| Filter | Description |
+|--------|-------------|
+| [`content_normalize`](content_normalize.md) | Normalizes Anthropic content block types for vLLM/Qwen compatibility. |
+
 ### Guardrails
 
 | Filter | Description |
@@ -81,6 +93,12 @@ see the [Praxis core filter reference][core-ref].
 |--------|-------------|
 | [`external_metering`](external_metering.md) | Integrates with an external metering service for pre-request balance checks and post-response token usage reporting. |
 
+### Model Access
+
+| Filter | Description |
+|--------|-------------|
+| [`model_access`](model_access.md) | Enforces model access control by checking the `model` field in the JSON request body against configured rules. |
+
 ### Model Catalog
 
 | Filter | Description |
@@ -109,5 +127,6 @@ see the [Praxis core filter reference][core-ref].
 
 | Filter | Description |
 |--------|-------------|
+| [`stream_usage_inject`](stream_usage_inject.md) | Injects `stream_options.include_usage = true` into streaming OpenAI chat-completions requests so the upstream response contains token usage. |
 | [`token_count`](token_count.md) | Extracts token usage from AI inference responses and writes unified counts to [`filter_metadata`]. |
 | [`token_usage_headers`](token_usage_headers.md) | Injects `Praxis-Token-Input`, `Praxis-Token-Output`, and `Praxis-Token-Total` headers into downstream responses when token usage data is present in [`filter_metadata`]. |
