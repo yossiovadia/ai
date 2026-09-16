@@ -26,16 +26,20 @@
 
 set -euo pipefail
 
-# ── Constants ─────────────────────────────────────────────────
-NAMESPACE="ai-gateway-dogfood"
-BC="praxis-ai"                       # BuildConfig + ImageStream name
-DEPLOY="praxis"
-IMAGE_STREAM="praxis-ai"
+# ── Constants (env-overridable so the same script drives a shadow stack;
+#    shadow.sh sets these — see deploy/openshift/shadow.sh) ─────
+NAMESPACE="${NAMESPACE:-ai-gateway-dogfood}"
+BC="${BC:-praxis-ai}"                       # BuildConfig + ImageStream name
+DEPLOY="${DEPLOY:-praxis}"
+CONTAINER="${CONTAINER:-praxis}"            # container name inside the Deployment
+CM_NAME="${CM_NAME:-praxis-config}"
+SMOKE_ROUTE="${SMOKE_ROUTE:-ai-gateway-unified}"
+IMAGE_STREAM="${IMAGE_STREAM:-praxis-ai}"
 REGISTRY="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}"
-FORK_URI="https://github.com/yossiovadia/ai.git"
+FORK_URI="${FORK_URI:-https://github.com/yossiovadia/ai.git}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CONFIG_MANIFEST="$SCRIPT_DIR/praxis.yaml"
+CONFIG_MANIFEST="${CONFIG_MANIFEST:-$SCRIPT_DIR/praxis.yaml}"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-2400}"     # 40m — cold Rust build
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-180}"  # 3m — pod pull + boot + ready
 
@@ -85,7 +89,7 @@ NEW_IMAGE="${REGISTRY}/${IMAGE_STREAM}:${IMAGE_TAG}"
 # Capture BEFORE we mutate anything so failure can restore exactly this.
 PREV_IMAGE="$(oc -n "$NAMESPACE" get deploy "$DEPLOY" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
 CONFIG_BAK="$(mktemp -t praxis-config.XXXXXX.yaml)"
-oc -n "$NAMESPACE" get cm praxis-config -o yaml 2>/dev/null > "$CONFIG_BAK" || true
+oc -n "$NAMESPACE" get cm "$CM_NAME" -o yaml 2>/dev/null > "$CONFIG_BAK" || true
 echo "  prev image: ${PREV_IMAGE:-<none>}"
 
 MUTATED=0   # set once we've changed cluster state, so the trap knows to roll back
@@ -94,7 +98,7 @@ rollback() {
     warn "Rolling back to last-known-good (image + config)…"
     [[ -s "$CONFIG_BAK" ]] && oc -n "$NAMESPACE" apply -f "$CONFIG_BAK" >/dev/null 2>&1 || true
     if [[ -n "$PREV_IMAGE" ]]; then
-        oc -n "$NAMESPACE" set image "deploy/$DEPLOY" "$DEPLOY=$PREV_IMAGE" >/dev/null 2>&1 || true
+        oc -n "$NAMESPACE" set image "deploy/$DEPLOY" "$CONTAINER=$PREV_IMAGE" >/dev/null 2>&1 || true
     fi
     oc -n "$NAMESPACE" rollout status "deploy/$DEPLOY" --timeout="${ROLLOUT_TIMEOUT}s" >/dev/null 2>&1 \
         && warn "Rolled back. Cluster is on the previous good revision." \
@@ -169,7 +173,7 @@ fi
 # never auto-rolls). If we didn't build this run, just restart to pick up config.
 log "Roll out"
 if [[ "$DO_BUILD" == 1 ]]; then
-    oc -n "$NAMESPACE" set image "deploy/$DEPLOY" "$DEPLOY=$NEW_IMAGE"
+    oc -n "$NAMESPACE" set image "deploy/$DEPLOY" "$CONTAINER=$NEW_IMAGE"
     oc -n "$NAMESPACE" annotate "deploy/$DEPLOY" \
         "kubernetes.io/change-cause=release.sh $IMAGE_TAG $(date -u +%FT%TZ)" --overwrite >/dev/null
 else
@@ -183,8 +187,8 @@ oc -n "$NAMESPACE" rollout status "deploy/$DEPLOY" --timeout="${ROLLOUT_TIMEOUT}
 # ── Smoke test ────────────────────────────────────────────────
 if [[ "$SKIP_SMOKE" == 0 ]]; then
     log "Smoke test (unified route)"
-    HOST="$(oc -n "$NAMESPACE" get route ai-gateway-unified -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-    [[ -n "$HOST" ]] || die "route ai-gateway-unified not found"
+    HOST="$(oc -n "$NAMESPACE" get route "$SMOKE_ROUTE" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    [[ -n "$HOST" ]] || die "route $SMOKE_ROUTE not found"
     if [[ -n "${SMOKE_API_KEY:-}" ]]; then
         BODY="$(curl -fsS --max-time 20 -H "x-api-key: $SMOKE_API_KEY" \
                  "https://$HOST/v1/models" 2>/dev/null)" \
@@ -207,7 +211,7 @@ trap - EXIT
 cleanup
 
 log "Released"
-echo "  image:  ${IMAGE_STREAM}:${IMAGE_TAG}  (rollback: oc set image deploy/$DEPLOY $DEPLOY=$PREV_IMAGE -n $NAMESPACE)"
+echo "  image:  ${IMAGE_STREAM}:${IMAGE_TAG}  (rollback: oc set image deploy/$DEPLOY $CONTAINER=$PREV_IMAGE -n $NAMESPACE)"
 echo "  config: $(basename "$CONFIG_MANIFEST")"
 echo "  pods:"
 oc -n "$NAMESPACE" get pods -l app="$DEPLOY"
