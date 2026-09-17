@@ -53,7 +53,9 @@ require_oc() {
 # ── Renderer ───────────────────────────────────────────────────
 # Reads prod manifests, renames + relabels, swaps metering endpoint.
 render() {
-    python3 - "$SCRIPT_DIR/praxis.yaml" "$SCRIPT_DIR/routes.yaml" "$SCRIPT_DIR/metering-service.yaml" <<'PY'
+    # SHADOW_METERING_MODE=prod (default, canary: report to prod metering-service,
+    # source-tagged) | isolated (pre-canary: shadow metering twin + shadow db).
+    python3 - "$SCRIPT_DIR/praxis.yaml" "$SCRIPT_DIR/routes.yaml" "$SCRIPT_DIR/metering-service.yaml" "${SHADOW_METERING_MODE:-prod}" <<'PY'
 import sys, yaml
 
 praxis_f, routes_f, metering_f = sys.argv[1:4]
@@ -87,9 +89,37 @@ for d in docs(praxis_f):
         d["metadata"]["name"] = "praxis-shadow-config"
         key = "praxis.yaml"
         if key in d.get("data", {}):
-            # isolate usage events: shadow metering endpoint (port prefix-safe)
-            d["data"][key] = d["data"][key].replace(
-                "http://metering-service:", "http://metering-service-shadow:")
+            cfg = d["data"][key]
+            mode = sys.argv[4] if len(sys.argv) > 4 else "prod"
+            if mode == "isolated":
+                # pre-canary mode: usage events go to the shadow metering
+                # twin / shadow db (zero prod footprint)
+                cfg = cfg.replace(
+                    "http://metering-service:", "http://metering-service-shadow:")
+            else:
+                # canary mode: report to the PROD metering-service so quotas
+                # and dashboards stay truthful while route weights split
+                # traffic. Rows are attributed via the source tag below.
+                n = cfg.count('source: "praxis-ai')
+                assert n == 4, f"expected 4 source tags, found {n}"
+                cfg = cfg.replace('source: "praxis-ai-benchmark"',
+                                  'source: "praxis-ai-shadow-benchmark"')
+                cfg = cfg.replace('source: "praxis-ai"', 'source: "praxis-ai-shadow"')
+            # build marker: a response answering x-gateway-build: new came
+            # from this build — Yos/Noy test through their UNCHANGED URLs
+            # and attribute per request. Best-effort (the metering source
+            # tag is the authoritative attribution).
+            lb_lines = [l for l in cfg.splitlines() if l.strip() == "- filter: load_balancer"]
+            assert len(lb_lines) == 4, f"expected 4 load_balancer entries, found {len(lb_lines)}"
+            assert len({len(l) - len(l.lstrip()) for l in lb_lines}) == 1, "mixed chain indents — extend render"
+            ind = " " * (len(lb_lines[0]) - len(lb_lines[0].lstrip()))
+            marker = (
+                f"{ind}- filter: headers\n"
+                f"{ind}  response_set:\n"
+                f"{ind}    - name: x-gateway-build\n"
+                f"{ind}      value: new\n\n")
+            cfg = cfg.replace(f"{ind}- filter: load_balancer", marker + f"{ind}- filter: load_balancer")
+            d["data"][key] = cfg
     elif kind == "Deployment":
         rename_label(d, "praxis", "praxis-shadow")
         d["metadata"]["name"] = "praxis-shadow"
