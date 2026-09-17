@@ -291,10 +291,12 @@ data:
           # Qwen's chat template only understands xhigh/medium/low and
           # 400s on the high/minimal values OpenAI-style clients send by
           # default (Claude Code effortLevel, Codex reasoning.effort).
-          # Scoped to the qwen cluster — the gpt lineup legitimately
-          # accepts high and rides other chains.
+          # Scoped by body model (the only scope visible from a body
+          # hook — the cluster is not yet selected when body filters
+          # run); the gpt lineup legitimately accepts high. Any new
+          # model added to the qwen-flash route needs adding here too.
           - filter: reasoning_effort_map
-            clusters: ["qwen-flash"]
+            models: ["Inferact/Qwen3.8-Flash-Next-NVFP4"]
 
           - filter: external_metering
             metering_url: "http://metering-service:8080"
