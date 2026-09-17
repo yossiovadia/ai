@@ -288,6 +288,14 @@ data:
           # Harmless for Anthropic-routed requests.
           - filter: content_normalize
 
+          # Qwen's chat template only understands xhigh/medium/low and
+          # 400s on the high/minimal values OpenAI-style clients send by
+          # default (Claude Code effortLevel, Codex reasoning.effort).
+          # Scoped to the qwen cluster — the gpt lineup legitimately
+          # accepts high and rides other chains.
+          - filter: reasoning_effort_map
+            clusters: ["qwen-flash"]
+
           - filter: external_metering
             metering_url: "http://metering-service:8080"
             # core 0.5.5 blocks filter sub-requests to private IPs by default (SSRF guard)
