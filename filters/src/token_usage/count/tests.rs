@@ -668,6 +668,79 @@ async fn sse_overflow_with_no_usage_sets_overflow_status() {
     );
 }
 
+/// Builds a Codex-style Responses-API stream: a small `response.created`,
+/// a couple of deltas, then a terminal `response.completed` whose embedded
+/// response object (full output items) pads it to `pad_bytes` — the shape
+/// that zeroed Codex spend on the prod ledger when the openai chain ran
+/// with the 64 KiB default scratch (canary incident 2026-09-17).
+fn codex_responses_stream(pad_bytes: usize) -> Vec<u8> {
+    let mut events = b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_canary\"}}\n\n".to_vec();
+    events.extend_from_slice(
+        b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+    );
+    events.extend_from_slice(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_canary\",\"output\":[{\"type\":\"output_text\",\"text\":\"");
+    events.extend(std::iter::repeat_n(b'x', pad_bytes));
+    events.extend_from_slice(
+        b"\"}],\"usage\":{\"input_tokens\":62000,\"output_tokens\":13000,\"total_tokens\":75000}}}\n\n",
+    );
+    events
+}
+
+/// The incident itself: on the 64 KiB default scratch, the terminal
+/// `response.completed` is oversized, gets skipped, and the request books
+/// as zero usage (with an overflow marker nothing downstream reads).
+#[tokio::test]
+async fn sse_responses_oversized_completed_event_books_zero_at_default_scratch() {
+    let filter = make_filter(ProviderKind::OpenAi);
+    let req = crate::test_utils::make_request(http::Method::POST, "/v1/responses");
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let mut resp = make_response_with_content_type("text/event-stream");
+    ctx.response_header = Some(&mut resp);
+    drop(filter.on_response(&mut ctx).await.unwrap());
+    ctx.response_header = None;
+
+    let mut body = Some(Bytes::from(codex_responses_stream(DEFAULT_MAX_SCRATCH_BYTES * 3)));
+    drop(filter.on_response_body(&mut ctx, &mut body, true).unwrap());
+
+    assert!(
+        ctx.get_metadata("token.input").is_none(),
+        "usage lives only in the oversized terminal event; at the default scratch it is dropped"
+    );
+    assert_eq!(
+        ctx.get_metadata("token.status"),
+        Some("overflow"),
+        "the ledger row is a silent zero unless consumers act on token.status=overflow"
+    );
+}
+
+/// The fix: the 1 MiB scratch budget the prod chains now configure
+/// (matching the old binary's hardcoded size) meters the same stream.
+#[tokio::test]
+async fn sse_responses_oversized_completed_event_meters_with_prod_scratch_budget() {
+    let mut filter = make_filter(ProviderKind::OpenAi);
+    filter.max_scratch_bytes = 1024 * 1024;
+    let req = crate::test_utils::make_request(http::Method::POST, "/v1/responses");
+    let mut ctx = crate::test_utils::make_filter_context(&req);
+
+    let mut resp = make_response_with_content_type("text/event-stream");
+    ctx.response_header = Some(&mut resp);
+    drop(filter.on_response(&mut ctx).await.unwrap());
+    ctx.response_header = None;
+
+    // Typical Codex turn: embedded output well past 64 KiB, well under 1 MiB.
+    let mut body = Some(Bytes::from(codex_responses_stream(DEFAULT_MAX_SCRATCH_BYTES * 3)));
+    drop(filter.on_response_body(&mut ctx, &mut body, true).unwrap());
+
+    assert_eq!(ctx.get_metadata("token.input"), Some("62000"));
+    assert_eq!(ctx.get_metadata("token.output"), Some("13000"));
+    assert_eq!(ctx.get_metadata("token.total"), Some("75000"));
+    assert!(
+        ctx.get_metadata("token.status").is_none(),
+        "captured usage is complete, not an overflow"
+    );
+}
+
 /// Anthropic/Bedrock split usage across events. If partial counts were
 /// stored and the terminal usage event itself overflows, emit the
 /// partials *and* `token.status = overflow` so they are not treated as

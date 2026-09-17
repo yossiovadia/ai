@@ -149,6 +149,12 @@ data:
 
           - filter: token_count
             provider: openai
+            # Codex (gpt-* Responses API) rides THIS listener: response.completed
+            # embeds the full response object and routinely exceeds the 64 KiB
+            # default, so the scanner dropped the usage-carrying event and the
+            # prod ledger booked Codex spend as 0 (canary incident 2026-09-17).
+            # Match the old binary's hardcoded 1 MiB scratch.
+            max_scratch_bytes: 1048576
 
           - filter: token_usage_headers
 
