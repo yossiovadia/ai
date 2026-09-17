@@ -51,7 +51,6 @@ data:
           - filter: model_access
             mode: denylist
             models:
-              - "claude-fable-*"
             overrides:
               - groups: ["octo-eng"]
                 mode: allowlist
@@ -120,7 +119,6 @@ data:
           - filter: model_access
             mode: denylist
             models:
-              - "claude-fable-*"
             overrides:
               - groups: ["octo-eng"]
                 mode: allowlist
@@ -258,7 +256,6 @@ data:
           - filter: model_access
             mode: denylist
             models:
-              - "claude-fable-*"
             overrides:
               - groups: ["octo-eng"]
                 mode: allowlist
