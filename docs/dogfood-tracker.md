@@ -13,7 +13,7 @@ Last updated: 2026-08-11
 | Routes (TLS edge) | DONE | 300s timeout for streaming |
 | VPC ALB idle timeout | DONE (2026-08-21) | 600s on router-default svc — see Ops Findings below |
 | Provider credentials secret | DONE | From ~/.env, NOT in manifest |
-| Claude Code through gateway | DONE | connect-dogfood.sh, Vertex env override |
+| Claude Code through gateway | DONE | welcome-page launcher, Vertex env override (connect-dogfood.sh removed 2026-09-23) |
 | Codex through gateway | DONE | Bearer prefix fix, config.toml dogfood provider |
 | create-api-key.sh script | DONE | Auto-names from username |
 

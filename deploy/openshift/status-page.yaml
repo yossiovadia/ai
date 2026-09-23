@@ -83,7 +83,7 @@ data:
     <div class="grid">
       <div class="card">
         <div class="card-title"><span class="badge done">Tested</span> Claude Code</div>
-        <div class="card-body">Via connect-dogfood.sh. Overrides Vertex env vars. Streaming validated.</div>
+        <div class="card-body">Via the welcome page setup (dashboard §Claude Code). Streaming validated.</div>
       </div>
       <div class="card">
         <div class="card-title"><span class="badge done">Tested</span> Codex CLI</div>
