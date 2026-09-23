@@ -12,7 +12,7 @@
 set -euo pipefail
 
 NAMESPACE="ai-gateway-dogfood"
-DEFAULT_KEY="<REDACTED-MAAS-KEY>"
+DEFAULT_KEY=""
 
 DRY_RUN=false
 API_KEY="$DEFAULT_KEY"

@@ -4,10 +4,11 @@
 # Prerequisites:
 #   - oc login to your cluster
 #   - Container images pushed to quay.io/yossiovadia/
-#   - ANTHROPIC_API_KEY set in environment
+#   - ANTHROPIC_API_KEY, OPENAI_API_KEY, LITELLM_API_KEY set in environment
 #
 # Usage:
 #   export ANTHROPIC_API_KEY="sk-ant-..."
+#   export LITELLM_API_KEY="sk-..."
 #   ./deploy/openshift/deploy.sh
 
 set -euo pipefail
@@ -31,6 +32,12 @@ fi
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     echo "ERROR: OPENAI_API_KEY not set."
     echo "  export OPENAI_API_KEY=\"sk-...\""
+    exit 1
+fi
+
+if [[ -z "${LITELLM_API_KEY:-}" ]]; then
+    echo "ERROR: LITELLM_API_KEY not set."
+    echo "  export LITELLM_API_KEY=\"sk-...\""
     exit 1
 fi
 
@@ -59,6 +66,7 @@ oc -n "$NAMESPACE" create secret generic postgresql-credentials \
 oc -n "$NAMESPACE" create secret generic provider-credentials \
     --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+    --from-literal=LITELLM_API_KEY="$LITELLM_API_KEY" \
     --dry-run=client -o yaml | oc apply -f -
 
 # ── Deploy PostgreSQL ─────────────────────────────────────────
